@@ -31,6 +31,13 @@ import {
   getRevisionHistory,
   formatRevisionHistory,
 } from "../lib/revision";
+import {
+  createSpecVersion,
+  createSpecDelta,
+  getLatestSpecVersion,
+  hashContent,
+  computeSectionDiffs,
+} from "../lib/spec-versions";
 
 export interface ReviseCommandOptions {
   /** Revise the spec.md artifact */
@@ -294,12 +301,39 @@ export async function reviseCommand(
     const result = await runClaudeRevision(prompt, projectPath);
 
     if (result.success && result.output.trim()) {
+      const revisedContent = result.output.trim();
+
       // Write the revised content
-      writeArtifact(feature.specPath, artifactType, result.output.trim());
+      writeArtifact(feature.specPath, artifactType, revisedContent);
+
+      // Create spec version and deltas for spec artifact revisions
+      if (artifactType === "spec") {
+        const previousVersion = getLatestSpecVersion(featureId);
+        const newVersion = createSpecVersion(featureId, hashContent(revisedContent));
+        console.log(`\n📸 Spec version ${newVersion.version} snapshot created`);
+
+        // Compute and store section-level deltas
+        if (previousVersion) {
+          const diffs = computeSectionDiffs(content, revisedContent);
+          for (const diff of diffs) {
+            createSpecDelta({
+              featureId,
+              fromVersion: previousVersion.version,
+              toVersion: newVersion.version,
+              changeType: diff.changeType,
+              sectionPath: diff.sectionPath,
+              diffContent: diff.diffContent,
+            });
+          }
+          if (diffs.length > 0) {
+            console.log(`📊 ${diffs.length} delta(s) recorded between v${previousVersion.version} → v${newVersion.version}`);
+          }
+        }
+      }
 
       console.log("\n─".repeat(60));
       console.log(`\n✓ Revised ${artifactType}.md`);
-      console.log(buildRevisionSummary(content, result.output.trim(), artifactType));
+      console.log(buildRevisionSummary(content, revisedContent, artifactType));
       console.log(`\nTo restore previous version: Use revision ID ${revisionEntry.id.slice(0, 8)}`);
       console.log(`\nNext: Run 'specflow eval run --file ${join(feature.specPath, ARTIFACT_FILES[artifactType])}' to evaluate`);
     } else {

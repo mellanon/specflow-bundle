@@ -334,6 +334,51 @@ export function getMissingBatchFields(feature: DecomposedFeature): string[] {
 }
 
 // =============================================================================
+// Spec Versioning & Deltas
+// =============================================================================
+
+/**
+ * Change type for spec delta records
+ */
+export type SpecChangeType = "ADDED" | "MODIFIED" | "REMOVED";
+
+/**
+ * A version snapshot of a feature's specification
+ */
+export interface SpecVersion {
+  /** Auto-incrementing ID */
+  id: number;
+  /** Feature this version belongs to */
+  featureId: string;
+  /** Version number (1, 2, 3, ...) */
+  version: number;
+  /** When this version was created */
+  createdAt: Date;
+  /** SHA-256 hash of the spec content at this version */
+  contentHash: string;
+}
+
+/**
+ * A delta record tracking a change between two spec versions
+ */
+export interface SpecDelta {
+  /** Auto-incrementing ID */
+  id: number;
+  /** Feature this delta belongs to */
+  featureId: string;
+  /** Source version number */
+  fromVersion: number;
+  /** Target version number */
+  toVersion: number;
+  /** Type of change */
+  changeType: SpecChangeType;
+  /** Dot-separated path to the changed section (e.g., "requirements.functional.auth") */
+  sectionPath: string;
+  /** Diff content describing the change */
+  diffContent: string | null;
+}
+
+// =============================================================================
 // Feature Context
 // =============================================================================
 

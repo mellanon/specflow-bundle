@@ -30,6 +30,9 @@ import { reviseCommand } from "./commands/revise";
 import { specifyAllCommand } from "./commands/specify-all";
 import { enrichCommand } from "./commands/enrich";
 import { contribPrepCommand } from "./commands/contrib-prep";
+import { brownfieldCommand } from "./commands/brownfield";
+import { reviewCommand } from "./commands/review";
+import { releaseCommand } from "./commands/release";
 
 // =============================================================================
 // Main Program
@@ -238,6 +241,15 @@ phaseCommand(program);
 
 // Register eval command group
 evalCommand(program);
+
+// Register brownfield command group
+brownfieldCommand(program);
+
+// Register review command
+reviewCommand(program);
+
+// Register release command
+releaseCommand(program);
 
 program
   .command("ui")

@@ -20,6 +20,7 @@ import {
   getDbPath,
   dbExists,
 } from "../lib/database";
+import { createSpecVersion, hashContent } from "../lib/spec-versions";
 import { loadThresholds, toDecimal, formatThreshold } from "../lib/threshold";
 import {
   buildProgressivePrompt,
@@ -168,6 +169,11 @@ export async function specifyCommand(
       if (existsSync(specFile)) {
         console.log("\n─".repeat(60));
         console.log(`\n📝 Spec created: ${specFile}`);
+
+        // Create initial spec version snapshot
+        const specContent = readFileSync(specFile, "utf-8");
+        const version = createSpecVersion(featureId, hashContent(specContent));
+        console.log(`📸 Spec version ${version.version} snapshot created`);
 
         // Load configurable thresholds
         const thresholds = loadThresholds(projectPath);
