@@ -25,7 +25,9 @@ import {
 import { runAIReview, appendAIReviewToMarkdown } from "../lib/review/ai-review";
 import type { AIReviewResult } from "../lib/review/ai-review";
 import { appendHumanReviewTemplate } from "../lib/review/human-template";
-import { writeReviewJson, readAllReviewJsons } from "../lib/review/artifacts";
+import { writeReviewJson, readAllReviewJsons, generateReviewReport } from "../lib/review/artifacts";
+import { attemptAutofix } from "../lib/review/autofix";
+import type { AutofixResult } from "../lib/review/autofix";
 import type { ReviewResult } from "../types";
 import type { Feature } from "../types";
 
@@ -39,6 +41,8 @@ interface ReviewOptions {
   checksOnly?: boolean;
   all?: boolean;
   status?: boolean;
+  autofix?: boolean;
+  report?: boolean;
 }
 
 // =============================================================================
@@ -149,8 +153,41 @@ async function reviewSingleFeature(
   }
 
   // Assemble and write review.json
-  const reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
+  let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
   writeReviewJson(projectPath, featureId, reviewResult);
+
+  // Autofix attempt — between Layer 2 (AI) and Layer 3 (human)
+  if (options.autofix && !reviewResult.passed) {
+    const autofixResult = await attemptAutofix(
+      featureId,
+      feature.specPath,
+      projectPath,
+      aiResult?.findings ?? [],
+      { missing: automatedResult.alignment.missing.slice() }
+    );
+
+    if (autofixResult.fixed) {
+      // Re-run checks and AI review after fix
+      const reChecks = sharedChecks ?? (await runAutomatedChecks(projectPath));
+      const reSpecContent = readFileSync(join(feature.specPath, "spec.md"), "utf-8");
+      const reAlignment = checkFileAlignment(reSpecContent, projectPath);
+      const reAutomated: AutomatedReviewResult = {
+        reviewedAt: new Date().toISOString(),
+        featureId,
+        checks: reChecks,
+        alignment: reAlignment,
+        passed: reChecks.every((c) => c.passed) && reAlignment.missing.length === 0,
+      };
+
+      let reAiResult: AIReviewResult | null = null;
+      if (!options.skipAi && !options.checksOnly) {
+        reAiResult = await runAIReview(featureId, feature.specPath, projectPath);
+      }
+
+      reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult);
+      writeReviewJson(projectPath, featureId, reviewResult);
+    }
+  }
 
   // Layer 3: Human Review Template — HITL by exception: only for failures
   if (!options.skipHuman && !options.checksOnly && !reviewResult.passed) {
@@ -261,7 +298,11 @@ async function reviewAll(projectPath: string, options: ReviewOptions): Promise<v
   }
 
   const total = passCount + failCount;
-  console.log(`\n  Review: ${passCount}/${total} pass, ${failCount} need attention\n`);
+  console.log(`\n  Review: ${passCount}/${total} pass, ${failCount} need attention`);
+
+  // Generate consolidated report
+  const reportPath = generateReviewReport(projectPath);
+  console.log(`\n  Report: ${reportPath}\n`);
 
   if (failCount > 0) {
     process.exit(1);
@@ -281,6 +322,13 @@ async function reviewCommandHandler(
   // --status doesn't need DB
   if (options.status) {
     showReviewStatus(projectPath);
+    return;
+  }
+
+  // --report: generate report from existing artifacts, no DB needed
+  if (options.report) {
+    const reportPath = generateReviewReport(projectPath);
+    console.log(`\n  Report generated: ${reportPath}\n`);
     return;
   }
 
@@ -380,8 +428,59 @@ async function reviewCommandHandler(
     }
 
     // Write review.json
-    const reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
+    let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
     writeReviewJson(projectPath, featureId, reviewResult);
+
+    // Autofix attempt — between Layer 2 and Layer 3
+    if (options.autofix && !reviewResult.passed) {
+      console.log("\n--- Autofix: Attempting AI-driven fixes ---\n");
+
+      const autofixResult = await attemptAutofix(
+        featureId,
+        feature.specPath,
+        projectPath,
+        aiResult?.findings ?? [],
+        { missing: alignment.missing.slice() }
+      );
+
+      if (autofixResult.attempted) {
+        if (autofixResult.fixed) {
+          console.log(`  + Autofix applied ${autofixResult.changes.length} change(s):`);
+          for (const c of autofixResult.changes) {
+            console.log(`    - ${c.file}: ${c.description}`);
+          }
+
+          // Re-run review
+          console.log("\n  Re-running review after autofix...\n");
+          const reChecks = await runAutomatedChecks(projectPath);
+          const reSpecContent = readFileSync(specFile, "utf-8");
+          const reAlignment = checkFileAlignment(reSpecContent, projectPath);
+          const reAutomated: AutomatedReviewResult = {
+            reviewedAt: new Date().toISOString(),
+            featureId,
+            checks: reChecks,
+            alignment: reAlignment,
+            passed: reChecks.every((c) => c.passed) && reAlignment.missing.length === 0,
+          };
+
+          let reAiResult: AIReviewResult | null = null;
+          if (!options.skipAi) {
+            reAiResult = await runAIReview(featureId, feature.specPath, projectPath);
+            const reScore = (reAiResult.score * 100).toFixed(0);
+            console.log(`  Re-review score: ${reScore}% ${reAiResult.passed ? "(PASS)" : "(FAIL)"}`);
+          }
+
+          reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult);
+          writeReviewJson(projectPath, featureId, reviewResult);
+        } else if (autofixResult.error) {
+          console.log(`  x Autofix failed: ${autofixResult.error}`);
+        } else {
+          console.log("  - Autofix made no changes");
+        }
+      } else {
+        console.log("  - No actionable findings for autofix");
+      }
+    }
 
     // Layer 3 — HITL by exception: only for failures
     if (!options.skipHuman && !reviewResult.passed) {
@@ -392,7 +491,7 @@ async function reviewCommandHandler(
 
     // Summary
     console.log(`\n${"─".repeat(50)}`);
-    const allPassed = automatedResult.passed && (aiResult?.passed ?? true);
+    const allPassed = reviewResult.passed;
     console.log(`\n${allPassed ? "+" : "x"} Review ${allPassed ? "PASSED" : "NEEDS ATTENTION"}`);
     console.log(`Review: ${reviewPath}`);
 
@@ -418,5 +517,7 @@ export function reviewCommand(program: Command): void {
     .option("--checks-only", "Run only automated checks (Layer 1)")
     .option("--all", "Review all features with specs")
     .option("--status", "Show review status from JSON artifacts")
+    .option("--autofix", "Attempt AI-driven fixes for failed reviews")
+    .option("--report", "Generate review report from existing artifacts")
     .action(reviewCommandHandler);
 }
