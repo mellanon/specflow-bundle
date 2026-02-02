@@ -173,6 +173,14 @@ async function reviewSingleFeature(
       { missing: automatedResult.alignment.missing.slice() }
     );
 
+    // Store autofix result in review artifact for human visibility
+    reviewResult.autofix = {
+      attempted: autofixResult.attempted,
+      fixed: autofixResult.fixed,
+      changes: autofixResult.changes,
+      error: autofixResult.error,
+    };
+
     if (autofixResult.fixed) {
       // Re-run checks and AI review after fix
       const reChecks = sharedChecks ?? (await runAutomatedChecks(projectPath));
@@ -192,8 +200,15 @@ async function reviewSingleFeature(
       }
 
       reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult);
-      writeReviewJson(projectPath, featureId, reviewResult);
+      reviewResult.autofix = {
+        attempted: autofixResult.attempted,
+        fixed: autofixResult.fixed,
+        changes: autofixResult.changes,
+        error: autofixResult.error,
+      };
     }
+
+    writeReviewJson(projectPath, featureId, reviewResult);
   }
 
   // Layer 3: Human Review Template — HITL by exception: only for failures

@@ -101,19 +101,26 @@ function buildAutofixPrompt(
     missingBlock = `\nMissing files referenced in spec:\n${missingFiles.map((f) => `- ${f}`).join("\n")}`;
   }
 
+  const issueBlocks: string[] = [];
+  if (findingsBlock) {
+    issueBlocks.push(`### AI Findings\n${findingsBlock}`);
+  }
+  if (missingBlock) {
+    issueBlocks.push(`### File Alignment Gaps${missingBlock}`);
+  }
+
   return `You are fixing code for feature ${featureId} to align with its specification.
 
 ## Specification
 ${specContent}
 
-## Review Findings (fix these)
-${findingsBlock || "No specific findings."}
-${missingBlock}
+## Issues to Fix
+${issueBlocks.length > 0 ? issueBlocks.join("\n\n") : "No specific issues found."}
 
 ## Instructions
 1. Read the relevant source files in this project.
-2. Fix the code to address each finding above.
-3. Focus on critical and warning findings only.
+2. For missing files: create them if they should exist, or update the spec references if the paths are wrong.
+3. For AI findings: fix the code to address critical and warning findings.
 4. Make minimal, targeted changes.
 5. After making changes, output a summary of what you changed.
 

@@ -138,6 +138,21 @@ export function generateReviewReport(projectPath: string): string {
         lines.push("**AI Findings:** _None_");
       }
 
+      // Autofix actions (so human can review what AI did)
+      if (r.autofix) {
+        lines.push("");
+        if (r.autofix.attempted && r.autofix.fixed) {
+          lines.push(`**Autofix Applied** (${r.autofix.changes.length} change(s)):`);
+          for (const c of r.autofix.changes) {
+            lines.push(`- \`${c.file}\` — ${c.description}`);
+          }
+        } else if (r.autofix.attempted && r.autofix.error) {
+          lines.push(`**Autofix Failed:** ${r.autofix.error}`);
+        } else if (r.autofix.attempted) {
+          lines.push("**Autofix:** Attempted but no changes made");
+        }
+      }
+
       lines.push("");
       lines.push("---");
       lines.push("");

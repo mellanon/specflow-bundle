@@ -101,7 +101,7 @@ async function hardenSingleFeature(
         );
 
     if (session.result !== "incomplete") {
-      const reportPath = writeReport(outputDir, featureId, feature.name, session, existing.testCases);
+      const reportPath = writeReport(outputDir, featureId, feature.name, session, existing.testCases, projectPath);
       console.log(`\n  Report: ${reportPath}`);
       handleResult(featureId, session);
     }
@@ -134,7 +134,7 @@ async function hardenSingleFeature(
       db, session, testCases, 0, outputDir, feature.name,
       projectPath, feature.specPath!
     );
-    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases);
+    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases, projectPath);
     console.log(`  Report: ${reportPath}`);
     handleResult(featureId, finalSession);
     return;
@@ -147,7 +147,7 @@ async function hardenSingleFeature(
   );
 
   if (finalSession.result !== "incomplete") {
-    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases);
+    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases, projectPath);
     console.log(`\n  Report: ${reportPath}`);
     handleResult(featureId, finalSession);
   }

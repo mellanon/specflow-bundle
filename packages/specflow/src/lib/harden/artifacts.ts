@@ -100,6 +100,11 @@ export function readFixes(projectPath: string, featureId: string): FixDescriptor
   return readJson<FixDescriptors>(join(dir, "fixes.json"), "fixes.json");
 }
 
+export function readFixesOptional(projectPath: string, featureId: string): FixDescriptors | null {
+  const dir = hardenDir(projectPath, featureId);
+  return readJsonOptional<FixDescriptors>(join(dir, "fixes.json"));
+}
+
 // === Convergence ===
 
 export function writeConvergence(projectPath: string, featureId: string, data: ConvergenceResult): string {

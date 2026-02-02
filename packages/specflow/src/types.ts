@@ -891,6 +891,12 @@ export interface ReviewResult {
     score: number;
     findings: { severity: string; area: string; description: string }[];
   } | null;
+  autofix?: {
+    attempted: boolean;
+    fixed: boolean;
+    changes: { file: string; description: string }[];
+    error?: string;
+  } | null;
   summary: {
     checksPass: boolean;
     aiPass: boolean | null;

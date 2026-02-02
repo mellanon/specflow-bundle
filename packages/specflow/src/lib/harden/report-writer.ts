@@ -6,6 +6,7 @@
 import { writeFileSync, renameSync } from "fs";
 import { join } from "path";
 import type { HardenTestCase, HardenSession } from "../../types";
+import { readTriageOptional, readFixesOptional } from "./artifacts";
 
 /**
  * Write harden-report.md
@@ -15,7 +16,8 @@ export function writeReport(
   featureId: string,
   featureName: string,
   session: HardenSession,
-  testCases: HardenTestCase[]
+  testCases: HardenTestCase[],
+  projectPath?: string
 ): string {
   const reportPath = join(outputDir, "harden-report.md");
   const overallResult = session.failed > 0 ? "FAIL" : "PASS";
@@ -47,6 +49,30 @@ export function writeReport(
       }
     }
     md += "\n";
+  }
+
+  // Triage and fix descriptors (if available)
+  if (projectPath) {
+    const triage = readTriageOptional(projectPath, featureId);
+    if (triage && triage.decisions.length > 0) {
+      md += `## Triage Decisions\n\n`;
+      md += `| TC | Category | Reasoning | Suggested Fix |\n`;
+      md += `|----|----------|-----------|---------------|\n`;
+      for (const d of triage.decisions) {
+        md += `| ${d.testCaseId} | ${d.category} | ${d.reasoning.substring(0, 80)} | ${(d.suggestedFix || "-").substring(0, 60)} |\n`;
+      }
+      md += "\n";
+    }
+
+    const fixes = readFixesOptional(projectPath, featureId);
+    if (fixes && fixes.descriptors.length > 0) {
+      md += `## AI Fix Descriptors\n\n`;
+      for (const f of fixes.descriptors) {
+        md += `### ${f.testCaseId} — \`${f.filePath}\`\n`;
+        md += `- **Issue:** ${f.description}\n`;
+        md += `- **Suggested Change:** ${f.suggestedChange}\n\n`;
+      }
+    }
   }
 
   md += `## Recommendation\n\n`;
