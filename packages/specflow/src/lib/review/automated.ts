@@ -149,7 +149,9 @@ function extractSpecFiles(specContent: string): string[] {
     if (
       path.includes("/") &&
       !path.startsWith("http") &&
-      !path.includes("node_modules")
+      !path.includes("node_modules") &&
+      !path.startsWith(".specify/") &&
+      !path.includes("{") // Skip template paths like {feature_id}
     ) {
       paths.push(path);
     }
