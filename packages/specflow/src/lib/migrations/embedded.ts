@@ -148,4 +148,123 @@ DROP INDEX IF EXISTS idx_spec_versions_feature_id;
 DROP TABLE IF EXISTS spec_deltas;
 DROP TABLE IF EXISTS spec_versions;`,
   },
+  {
+    version: 8,
+    name: "approval_gates",
+    upSql: `CREATE TABLE IF NOT EXISTS approval_gates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id TEXT NOT NULL,
+    phase_boundary TEXT NOT NULL,
+    urgency TEXT NOT NULL CHECK (urgency IN ('critical', 'review', 'ambient')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'auto_approved', 'timed_out')),
+    triggered_at TEXT NOT NULL,
+    resolved_at TEXT,
+    timeout_at TEXT,
+    resolved_by TEXT,
+    rejection_reason TEXT,
+    FOREIGN KEY (feature_id) REFERENCES features(id)
+);
+
+CREATE INDEX idx_approval_gates_pending ON approval_gates(status) WHERE status = 'pending';
+CREATE INDEX idx_approval_gates_feature ON approval_gates(feature_id);`,
+    downSql: `DROP INDEX IF EXISTS idx_approval_gates_feature;
+DROP INDEX IF EXISTS idx_approval_gates_pending;
+DROP TABLE IF EXISTS approval_gates;`,
+  },
+  {
+    version: 9,
+    name: "pipeline_failures",
+    upSql: `CREATE TABLE IF NOT EXISTS pipeline_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    missing_artifacts TEXT NOT NULL,
+    error_message TEXT,
+    last_successful_phase TEXT,
+    resume_count INTEGER NOT NULL DEFAULT 0,
+    blocked_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (feature_id) REFERENCES features(id)
+);
+
+CREATE INDEX idx_pipeline_failures_feature ON pipeline_failures(feature_id);
+CREATE INDEX idx_pipeline_failures_unresolved ON pipeline_failures(resolved_at) WHERE resolved_at IS NULL;`,
+    downSql: `DROP INDEX IF EXISTS idx_pipeline_failures_unresolved;
+DROP INDEX IF EXISTS idx_pipeline_failures_feature;
+DROP TABLE IF EXISTS pipeline_failures;`,
+  },
+  {
+    version: 10,
+    name: "add_execution_log",
+    upSql: `CREATE TABLE IF NOT EXISTS execution_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    duration_seconds INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed', 'skipped', 'blocked')),
+    git_sha_before TEXT,
+    git_sha_after TEXT,
+    artifacts_produced TEXT,
+    error_message TEXT,
+    FOREIGN KEY (feature_id) REFERENCES features(id)
+);
+
+CREATE INDEX idx_execution_log_feature ON execution_log(feature_id);
+CREATE INDEX idx_execution_log_feature_phase ON execution_log(feature_id, phase);`,
+    downSql: `DROP INDEX IF EXISTS idx_execution_log_feature_phase;
+DROP INDEX IF EXISTS idx_execution_log_feature;
+DROP TABLE IF EXISTS execution_log;`,
+  },
+  {
+    version: 11,
+    name: "add_evolve_fields",
+    upSql: `ALTER TABLE features ADD COLUMN evolved_at TEXT;
+ALTER TABLE features ADD COLUMN baseline_path TEXT;`,
+    downSql: `SELECT 1;`,
+  },
+  {
+    version: 12,
+    name: "harden_sessions",
+    upSql: `CREATE TABLE IF NOT EXISTS harden_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  result TEXT NOT NULL DEFAULT 'incomplete'
+    CHECK (result IN ('pass', 'fail', 'incomplete')),
+  total_tests INTEGER NOT NULL DEFAULT 0,
+  passed INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  protocol_path TEXT NOT NULL,
+  report_path TEXT,
+  FOREIGN KEY (feature_id) REFERENCES features(id)
+);
+CREATE INDEX idx_harden_sessions_feature ON harden_sessions(feature_id);
+
+CREATE TABLE IF NOT EXISTS harden_test_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL,
+  test_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  source TEXT NOT NULL,
+  test_type TEXT NOT NULL DEFAULT 'manual'
+    CHECK (test_type IN ('automated', 'manual', 'hybrid')),
+  preconditions TEXT,
+  steps TEXT NOT NULL,
+  expected_result TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'pass', 'fail', 'skipped')),
+  notes TEXT,
+  executed_at TEXT,
+  FOREIGN KEY (session_id) REFERENCES harden_sessions(id)
+);
+CREATE INDEX idx_harden_test_cases_session ON harden_test_cases(session_id);`,
+    downSql: `DROP INDEX IF EXISTS idx_harden_test_cases_session;
+DROP INDEX IF EXISTS idx_harden_sessions_feature;
+DROP TABLE IF EXISTS harden_test_cases;
+DROP TABLE IF EXISTS harden_sessions;`,
+  },
 ];

@@ -16,6 +16,19 @@ import {
 import { buildAppContext, buildFeatureContext, formatContextForAgent } from "./context";
 import { executeFeature, executeFeatureStreaming } from "./executor";
 import type { Feature, RunOptions, RunResult, FeatureStats } from "../types";
+import {
+  initProgressFile,
+  updatePhaseStart,
+  updatePhaseComplete,
+  updatePipelineError,
+  completePipeline,
+} from "./progress-writer";
+import { loadSpecflowConfig } from "./config";
+import { getPhaseHooks } from "./config";
+import { executeHooks, buildHookEnv } from "./hook-executor";
+import { startPhaseExecution, completePhaseExecution, failPhaseExecution } from "./execution-log";
+import { evaluateGate, waitForResolution } from "./gate-evaluator";
+import { getDbInstance } from "./database";
 
 // =============================================================================
 // Runner Configuration
@@ -95,6 +108,14 @@ export async function runLoop(
       updateFeatureStatus(feature.id, "in_progress");
       callbacks.onFeatureStart?.(feature);
 
+      // Initialize pipeline progress tracking
+      initProgressFile(projectPath, feature.id, feature.name, ["implement"]);
+      updatePhaseStart(projectPath, "implement");
+
+      // Start execution log entry
+      const db = getDbInstance();
+      const logId = startPhaseExecution(db, feature.id, "implement", null);
+
       // Build context for this feature
       const featureContext = buildFeatureContext(appContext, feature);
       const prompt = formatContextForAgent(featureContext);
@@ -129,18 +150,25 @@ export async function runLoop(
 
       // Handle result
       if (result.success) {
+        completePhaseExecution(db, logId, null, []);
         updateFeatureStatus(feature.id, "complete");
+        updatePhaseComplete(projectPath, "implement", []);
+        completePipeline(projectPath);
         callbacks.onFeatureComplete?.(feature, result);
         featuresCompleted++;
 
         const stats = getStats();
         callbacks.onProgress?.(stats);
       } else if (result.blocked) {
+        failPhaseExecution(db, logId, result.blockReason ?? "Unknown reason");
         skipFeature(feature.id);
+        updatePipelineError(projectPath, "implement", result.blockReason ?? "Unknown reason");
         callbacks.onFeatureBlocked?.(feature, result.blockReason ?? "Unknown reason");
       } else {
         // Failed - keep as in_progress for retry or manual intervention
+        failPhaseExecution(db, logId, result.error ?? "Unknown error");
         callbacks.onFeatureFailed?.(feature, result.error ?? "Unknown error");
+        updatePipelineError(projectPath, "implement", result.error ?? "Unknown error");
 
         // Don't auto-continue on failure - let user decide
         console.log("\nFeature failed. Stopping runner.");
@@ -183,6 +211,37 @@ export async function runSingleFeature(
     updateFeatureStatus(feature.id, "in_progress");
     callbacks.onFeatureStart?.(feature);
 
+    // Initialize pipeline progress tracking
+    initProgressFile(projectPath, feature.id, feature.name, ["implement"]);
+    updatePhaseStart(projectPath, "implement");
+
+    // Start execution log entry
+    const db = getDbInstance();
+    const logId = startPhaseExecution(db, feature.id, "implement", null);
+
+    // Run pre-hooks for implement phase
+    const config = loadSpecflowConfig(projectPath);
+    const preHooks = getPhaseHooks(config, "implement", "pre");
+    if (preHooks.length > 0) {
+      const env = buildHookEnv(feature.id, "implement", projectPath);
+      const hookResult = await executeHooks(preHooks, env, { position: "pre", cwd: projectPath });
+      if (!hookResult.success) {
+        const failedHook = hookResult.results[hookResult.abortedAtIndex ?? 0];
+        const msg = `Pre-hook aborted implement phase: '${failedHook.command}' exited with code ${failedHook.exitCode}`;
+        console.error(msg);
+        updatePipelineError(projectPath, "implement", msg);
+        callbacks.onFeatureBlocked?.(feature, msg);
+        return {
+          success: false,
+          featureId: feature.id,
+          output: failedHook.stderr || failedHook.stdout,
+          error: msg,
+          blocked: true,
+          blockReason: msg,
+        };
+      }
+    }
+
     // Build context
     const featureContext = buildFeatureContext(appContext, feature);
     const prompt = formatContextForAgent(featureContext);
@@ -203,21 +262,96 @@ export async function runSingleFeature(
       });
     }
 
+    // Run post-hooks for implement phase
+    const postHooks = getPhaseHooks(config, "implement", "post");
+    if (postHooks.length > 0) {
+      const phaseStatus = result.success ? "success" : result.blocked ? "blocked" : "failed";
+      const postEnv = buildHookEnv(feature.id, "implement", projectPath, phaseStatus);
+      await executeHooks(postHooks, postEnv, { position: "post", cwd: projectPath });
+    }
+
     // Update status based on result
     if (result.success) {
+      completePhaseExecution(db, logId, null, []);
+
+      // Evaluate gate at implement->complete boundary
+      const gateResult = evaluateGate(db, projectPath, feature.id, "implement_to_complete");
+      if (gateResult && gateResult.action === "block") {
+        console.log(`[GATE:CRITICAL] implement_to_complete for ${feature.id} — awaiting approval`);
+        await waitForResolution(db, feature.id, "implement_to_complete", gateResult.timeoutMs, projectPath);
+        console.log(`[GATE:RESOLVED] implement_to_complete for ${feature.id} — proceeding`);
+      } else if (gateResult && gateResult.action === "notify_and_wait") {
+        console.log(`[GATE:REVIEW] implement_to_complete for ${feature.id} — awaiting review`);
+        await waitForResolution(db, feature.id, "implement_to_complete", gateResult.timeoutMs, projectPath);
+        console.log(`[GATE:RESOLVED] implement_to_complete for ${feature.id} — proceeding`);
+      }
+
       updateFeatureStatus(feature.id, "complete");
+      updatePhaseComplete(projectPath, "implement", []);
+      completePipeline(projectPath);
       callbacks.onFeatureComplete?.(feature, result);
     } else if (result.blocked) {
+      failPhaseExecution(db, logId, result.blockReason ?? "Unknown");
       skipFeature(feature.id);
+      updatePipelineError(projectPath, "implement", result.blockReason ?? "Unknown");
       callbacks.onFeatureBlocked?.(feature, result.blockReason ?? "Unknown");
     } else {
+      failPhaseExecution(db, logId, result.error ?? "Unknown error");
       callbacks.onFeatureFailed?.(feature, result.error ?? "Unknown error");
+      updatePipelineError(projectPath, "implement", result.error ?? "Unknown error");
     }
 
     return result;
   } finally {
     closeDatabase();
   }
+}
+
+// =============================================================================
+// Hook Utilities (exported for use by other phase-executing commands)
+// =============================================================================
+
+/**
+ * Run pre-hooks for a phase. Returns true if phase should proceed, false if aborted.
+ */
+export async function runPreHooks(
+  projectPath: string,
+  featureId: string,
+  phase: string
+): Promise<{ proceed: boolean; error?: string }> {
+  const config = loadSpecflowConfig(projectPath);
+  const hooks = getPhaseHooks(config, phase, "pre");
+  if (hooks.length === 0) return { proceed: true };
+
+  const env = buildHookEnv(featureId, phase, projectPath);
+  const result = await executeHooks(hooks, env, { position: "pre", cwd: projectPath });
+
+  if (!result.success) {
+    const failed = result.results[result.abortedAtIndex ?? 0];
+    return {
+      proceed: false,
+      error: `Pre-hook aborted ${phase} phase: '${failed.command}' exited with code ${failed.exitCode}`,
+    };
+  }
+
+  return { proceed: true };
+}
+
+/**
+ * Run post-hooks for a phase. Always succeeds (fire-and-forget).
+ */
+export async function runPostHooks(
+  projectPath: string,
+  featureId: string,
+  phase: string,
+  phaseStatus: string
+): Promise<void> {
+  const config = loadSpecflowConfig(projectPath);
+  const hooks = getPhaseHooks(config, phase, "post");
+  if (hooks.length === 0) return;
+
+  const env = buildHookEnv(featureId, phase, projectPath, phaseStatus);
+  await executeHooks(hooks, env, { position: "post", cwd: projectPath });
 }
 
 // =============================================================================

@@ -100,5 +100,52 @@
     "description": "New execution_log table in features.db with columns: id (auto), feature_id (text), phase (text), started_at (datetime), completed_at (datetime), duration_seconds (integer), status (text: success|failed|skipped|blocked), git_sha_before (text), git_sha_after (text), artifacts_produced (json array), error_message (text nullable), urgency_tier (text nullable), approval_status (text nullable: approved|rejected|auto-approved|timeout). Migration 008. Every pipeline phase execution writes a row on start (status=running) and updates on completion. `specflow log F-N` renders execution history as a timeline. `specflow log F-N --phase implement` shows details for a specific phase. Git SHA tracking enables rollback: `specflow rollback F-N --to-phase plan` resets to git_sha_before of the implement phase. The specflow-ui dashboard consumes this table for the phase timeline visualization.",
     "dependencies": ["F-1"],
     "priority": 3
+  },
+  {
+    "id": "F-16",
+    "name": "Autorun — full-lifecycle self-orchestration loop",
+    "description": "New `specflow autorun` command that drives all pending features through the complete SPECIFY → PLAN → TASKS → IMPLEMENT → COMPLETE pipeline without stopping between features or phases. Core behavior: (1) select next incomplete feature via priority order from features.db, (2) drive it through each remaining phase by invoking the existing phase commands (specify, plan, tasks, implement, complete), (3) respect F-13 approval gates at configured phase boundaries, (4) on failure use F-14 recovery (mark blocked, skip to next feature), (5) write F-11 progress and F-15 audit log throughout, (6) emit F-12 notifications at phase transitions, (7) loop to step 1 until all features are complete or all remaining are blocked. Options: --feature F-N (single feature, all phases), --from-phase specify|plan|tasks|implement (resume mid-lifecycle), --dry-run (show execution plan without running), --max-features N (limit batch size), --stop-on-failure (halt pipeline on first blocked feature instead of skipping). Exit conditions: all features complete, all remaining features blocked, operator sends SIGINT, or approval gate rejection. This is the orchestrator that replaces Maestro's document-loop pattern for single-agent execution in Claude Code. The existing runLoop in runner.ts handles IMPLEMENT-only; autorun extends this to all phases. Headless mode (--headless) passes through to each phase command for non-interactive execution.",
+    "dependencies": ["F-11", "F-12", "F-13", "F-14", "F-15"],
+    "priority": 2
+  },
+  {
+    "id": "F-17",
+    "name": "Evolve command — greenfield-to-brownfield handoff",
+    "description": "New `specflow evolve F-N` command that transitions a completed feature from greenfield (v1.0) into brownfield iteration (v1.1+). When a feature reaches COMPLETE status, `evolve` snapshots its spec as a baseline in .specify/baselines/{feature_id}/spec-v1.0.md, copies implementation file inventory to a manifest, and transitions the feature state to 'evolving'. Subsequent changes use the brownfield workflow (F-3 scan, F-4 diff, F-5 apply) against this baseline. The evolve command also generates a delta-spec template pre-populated with the feature's current structure so the operator can describe what's changing for the next iteration. Without this command, there is no formal path from 'feature complete' to 'feature needs changes' — the operator must manually re-enter the brownfield workflow. This closes the gap identified in the landscape research §9 and §13: 'Design v1.0→v1.1 handoff — how a completed SpecFlow feature becomes input for next brownfield iteration.'",
+    "dependencies": ["F-3", "F-4", "F-5"],
+    "priority": 2
+  },
+  {
+    "id": "F-18",
+    "name": "Review gate — REVIEW status and pipeline pause",
+    "description": "Add a REVIEW status to the feature state machine in features.db. When the review command (F-6/7/8) completes and generates review.md, the feature transitions to status='review' and the pipeline pauses. The operator is notified via F-12 (REVIEW tier) that artifacts are ready for inspection. Pipeline resumes only when the operator runs `specflow approve-review F-N` (advances to next phase) or `specflow request-changes F-N --reason '...'` (returns feature to IMPLEMENT status with feedback written to .specify/reviews/{feature_id}/feedback.md). This implements the vibe-kanban pattern: InProgress → InReview → (feedback) → InProgress OR InReview → Done. Without this feature, F-6/7/8 generate review artifacts but the pipeline never stops for a human to look at them — defeating the purpose of review. The autorun loop (F-16) respects this gate: when a feature enters REVIEW status, autorun skips it and moves to the next feature, returning to it after approval.",
+    "dependencies": ["F-12", "F-13"],
+    "priority": 2
+  },
+  {
+    "id": "F-19",
+    "name": "Harden command — guided acceptance testing protocol",
+    "description": "New `specflow harden F-N` command that runs a guided acceptance testing session. Reads the feature's spec.md to extract acceptance criteria and functional requirements, then generates a structured test protocol in .specify/harden/{feature_id}/protocol.md with numbered test cases. Each test case includes: description, preconditions, steps, expected result, and a pass/fail field. The command enters an interactive loop where the agent executes each test (browser automation via Playwright for UI tests, CLI invocation for API tests, or manual instruction for human-only tests), the operator observes and confirms pass/fail, and results are recorded. The operator can steer ('skip this', 'add a test for X', 'try edge case Y') while the agent drives execution. On completion, generates harden-report.md with pass/fail summary and any issues found. Features that pass all required acceptance tests can proceed to COMPLETE; failures return the feature to IMPLEMENT with specific issues documented. This fills the HARDEN phase gap identified in the landscape research §11 where acceptance testing had zero tooling.",
+    "priority": 3
+  },
+  {
+    "id": "F-20",
+    "name": "Semantic versioning — tag and version management",
+    "description": "New `specflow version` command suite for semantic versioning. `specflow version bump major|minor|patch` creates annotated git tags (vX.Y.Z) following semver conventions. `specflow version current` shows the current version derived from git tags. `specflow version changelog` generates CHANGELOG.md entries from spec deltas (F-2) between versions, using Keep a Changelog format with [Unreleased] → versioned sections. The release command (F-9) integrates with versioning: gate 3 (CHANGELOG) uses `specflow version changelog` to auto-generate entries, and gate 4 (file inventory) includes the version tag. The tag-before-contrib pattern is enforced: `specflow release` requires a version tag before contribution packaging (F-10) can proceed. This ports the semantic versioning capability from SpecFirst into SpecFlow as recommended in the landscape research §4.",
+    "dependencies": ["F-2", "F-9"],
+    "priority": 3
+  },
+  {
+    "id": "F-21",
+    "name": "Phase hooks — pre/post execution hooks per phase",
+    "description": "Configurable pre-phase and post-phase hooks that execute at phase boundaries. Configuration in .specflow/config.yaml under hooks: { pre_specify: ['command'], post_specify: ['command'], pre_plan: ['command'], ... }. Pre-hooks run before a phase starts and can abort the phase (non-zero exit = phase skipped with 'blocked' status). Post-hooks run after a phase completes successfully and are fire-and-forget (failures logged but don't affect phase status). Use cases: pre_implement could run `npm install` or `docker compose up`; post_complete could trigger a deployment script or notify an external system; pre_specify could load project context from an external source. Hooks receive environment variables: SPECFLOW_FEATURE_ID, SPECFLOW_PHASE, SPECFLOW_PROJECT_PATH, SPECFLOW_ARTIFACTS_DIR. The autorun loop (F-16) and individual phase commands both respect hooks. This implements the vibe-kanban 'action chaining' pattern for setup → agent → cleanup sequences.",
+    "priority": 3
+  },
+  {
+    "id": "F-22",
+    "name": "SpecFlow skill layer — SKILL.md routing and workflow files",
+    "description": "Create the PAI skill layer that wraps all SpecFlow CLI commands into natural language workflows. Architecture follows the PAI 'Code Before Prompts' principle: TypeScript packages (code) → specflow CLI (tool) → SKILL.md + workflows (skill). Structure: skills/specflow/SKILL.md (routing hub, <500 lines) + skills/specflow/workflows/*.md (one per major operation). SKILL.md provides natural language routing table mapping user intent to CLI commands, with 'USE WHEN' trigger phrases for skill discovery. Workflows implement the three interaction modes from the vibe-kanban council debate: (1) terminal-blocking for approval gates and critical failures, (2) persistent visual via specflow-ui dashboard, (3) passive ambient via progress.json and --headless flag. The skill embodies the exception-based attention model: agents work autonomously, humans intervene only on state transitions (completion, approval, failure). Notification routing follows the 'start noisy, tune down' principle — v1 pushes critical+review tiers, operator configures down as trust builds. Every notification must answer: 'Why does this require human judgment RIGHT NOW?' Workflow files cover: autorun (F-16 full lifecycle), specify/plan/tasks/implement/complete (individual phases), harden (F-19 acceptance testing), evolve (F-17 brownfield handoff), review-gate (F-18 pipeline pause), brownfield (F-3/4/5 scan/diff/apply), release (F-9/10 gate evaluation), status (F-11 monitoring), and approve/reject (F-13 gate responses). Two-phase retrieval pattern where applicable: specflow status → user selects feature → specflow <command> F-N. Approval gate UX uses structured JSON output with urgency field (not exit codes) per council consensus. Skill metadata declares: supports_headless, notification_points, checkpoint_strategy, interaction_modes. The skill's job is ROUTING and RENDERING — CLI does the work, skill maps natural language to commands and presents results conversationally. Follows gold standard patterns from _JIRA, _COUPA, _CONTEXT skills.",
+    "dependencies": ["F-11", "F-12", "F-13", "F-16", "F-18", "F-19"],
+    "priority": 2
   }
 ]

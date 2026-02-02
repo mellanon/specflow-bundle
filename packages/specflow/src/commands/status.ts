@@ -15,7 +15,8 @@ import {
 } from "../lib/database";
 import { getContribState } from "../lib/contrib-prep";
 import { getGateTitle } from "../lib/contrib-prep/gates";
-import type { Feature, FeatureStats } from "../types";
+import type { Feature, FeatureStats, ProgressFile } from "../types";
+import { readProgressFile, isStale, formatSummaryHeader, formatBriefLine, getElapsedSeconds } from "../lib/progress-reader";
 
 // =============================================================================
 // Status Display
@@ -23,6 +24,9 @@ import type { Feature, FeatureStats } from "../types";
 
 export interface StatusOptions {
   json?: boolean;
+  brief?: boolean;
+  watch?: boolean;
+  persist?: boolean;
 }
 
 /**
@@ -55,10 +59,60 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
     const features = getFeatures();
     const stats = getStats();
 
+    // Read pipeline progress
+    const progress = readProgressFile(projectPath);
+
+    if (options.brief) {
+      if (progress) {
+        console.log(formatBriefLine(progress, { total: stats.total, complete: stats.complete, percentComplete: stats.percentComplete }));
+      } else {
+        console.log(`${stats.complete}/${stats.total} complete (${stats.percentComplete}%)`);
+      }
+      return;
+    }
+
+    if (options.watch) {
+      const render = () => {
+        process.stdout.write("\x1b[2J\x1b[H");
+        const freshFeatures = getFeatures();
+        const freshStats = getStats();
+        const freshProgress = readProgressFile(projectPath);
+        if (freshProgress) {
+          console.log(formatSummaryHeader(freshProgress, { total: freshStats.total, complete: freshStats.complete, percentComplete: freshStats.percentComplete }));
+          console.log("");
+        }
+        outputTable(freshFeatures, freshStats, freshProgress);
+
+        if (freshProgress && isStale(freshProgress) && !options.persist) {
+          console.log("\nPipeline complete. Exiting watch mode.");
+          clearInterval(interval);
+          return true;
+        }
+        return false;
+      };
+
+      render();
+      const interval = setInterval(() => {
+        if (render()) {
+          closeDatabase();
+          process.exit(0);
+        }
+      }, 5000);
+
+      process.on("SIGINT", () => {
+        clearInterval(interval);
+        closeDatabase();
+        process.exit(0);
+      });
+
+      // Block forever until signal or auto-exit
+      await new Promise(() => {});
+    }
+
     if (options.json) {
-      outputJson(features, stats);
+      outputJson(features, stats, progress);
     } else {
-      outputTable(features, stats);
+      outputTable(features, stats, progress);
     }
   } finally {
     closeDatabase();
@@ -69,9 +123,24 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
 // Output Formatting
 // =============================================================================
 
-function outputJson(features: Feature[], stats: FeatureStats): void {
+function outputJson(features: Feature[], stats: FeatureStats, progress?: ProgressFile | null): void {
   const output = {
-    stats,
+    summary: {
+      total: stats.total,
+      complete: stats.complete,
+      in_progress: stats.inProgress,
+      pending: stats.pending,
+      skipped: stats.skipped,
+      progress_pct: stats.percentComplete,
+    },
+    in_flight: progress && !isStale(progress) ? {
+      feature_id: progress.feature_id,
+      name: progress.feature_name,
+      phase: progress.current_phase,
+      status: progress.status,
+      elapsed_seconds: getElapsedSeconds(progress),
+    } : null,
+    pipeline: progress ?? null,
     features: features.map((f) => ({
       id: f.id,
       name: f.name,
@@ -89,9 +158,15 @@ function outputJson(features: Feature[], stats: FeatureStats): void {
   console.log(JSON.stringify(output, null, 2));
 }
 
-function outputTable(features: Feature[], stats: FeatureStats): void {
+function outputTable(features: Feature[], stats: FeatureStats, progress?: ProgressFile | null): void {
   // Header
   console.log("\n📊 SpecFlow Status\n");
+
+  // Pipeline summary header (if available)
+  if (progress) {
+    console.log(formatSummaryHeader(progress, { total: stats.total, complete: stats.complete, percentComplete: stats.percentComplete }));
+    console.log("");
+  }
 
   // Stats summary
   console.log(`${stats.total} features | ${stats.complete} complete | ${stats.inProgress} in progress | ${stats.pending} pending | ${stats.skipped} skipped`);

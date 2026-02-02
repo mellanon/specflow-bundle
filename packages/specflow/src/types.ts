@@ -10,7 +10,7 @@
 /**
  * Status of a feature in the queue
  */
-export type FeatureStatus = "pending" | "in_progress" | "complete" | "skipped";
+export type FeatureStatus = "pending" | "in_progress" | "complete" | "skipped" | "blocked" | "evolving";
 
 /**
  * Reason for skipping a feature
@@ -100,6 +100,15 @@ export interface Feature {
   skipValidatedAt?: Date;
   /** If duplicate, which feature it duplicates */
   skipDuplicateOf?: string;
+
+  // ==========================================================================
+  // Evolve Fields (F-017)
+  // ==========================================================================
+
+  /** When the feature was evolved to brownfield mode */
+  evolvedAt?: Date;
+  /** Path to baseline directory */
+  baselinePath?: string | null;
 }
 
 // =============================================================================
@@ -379,6 +388,62 @@ export interface SpecDelta {
 }
 
 // =============================================================================
+// Pipeline Progress
+// =============================================================================
+
+export interface PipelinePhaseEntry {
+  name: string;
+  status: "pending" | "running" | "complete" | "error";
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  artifacts_produced: string[];
+}
+
+export interface PipelineError {
+  phase: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface ProgressFile {
+  feature_id: string;
+  feature_name: string;
+  current_phase: string;
+  status: "running" | "paused" | "blocked" | "complete";
+  started_at: string;
+  completed_at: string | null;
+  phases: PipelinePhaseEntry[];
+  errors: PipelineError[];
+}
+
+export interface StatusOutput {
+  summary: {
+    total: number;
+    complete: number;
+    in_progress: number;
+    pending: number;
+    skipped: number;
+    progress_pct: number;
+  };
+  in_flight: {
+    feature_id: string;
+    name: string;
+    phase: string;
+    status: string;
+    elapsed_seconds: number;
+  } | null;
+  pipeline: ProgressFile | null;
+  features: Array<{
+    id: string;
+    name: string;
+    status: string;
+    phase: string;
+    priority: number;
+  }>;
+}
+
+// =============================================================================
 // Feature Context
 // =============================================================================
 
@@ -434,4 +499,424 @@ export interface RunResult {
   blocked: boolean;
   /** Reason for blocking (if blocked) */
   blockReason: string | null;
+}
+
+// =============================================================================
+// Notification System
+// =============================================================================
+
+/**
+ * Urgency tier for notifications
+ */
+export type NotificationTier = "critical" | "review" | "ambient";
+
+/**
+ * Notification delivery backend
+ */
+export type NotificationBackend = "voice" | "desktop" | "webhook" | "terminal-block";
+
+/**
+ * Type of phase transition
+ */
+export type PhaseTransitionType = "enter" | "complete" | "fail";
+
+/**
+ * Event emitted when a phase transition occurs
+ */
+export interface PhaseEvent {
+  phase: SpecPhase;
+  transition: PhaseTransitionType;
+  featureId: string;
+  featureName: string;
+  timestamp: string;
+  pipelineContext?: string;
+}
+
+/**
+ * Payload sent to notification backends
+ */
+export interface NotificationPayload {
+  phase: string;
+  transition: PhaseTransitionType;
+  tier: NotificationTier;
+  featureId: string;
+  featureName: string;
+  timestamp: string;
+  pipelineContext?: string;
+}
+
+/**
+ * Configuration for the notification system
+ */
+export interface NotificationConfig {
+  notification_backends: NotificationBackend[];
+  webhook_url: string;
+  default_urgency_by_phase: Record<string, NotificationTier>;
+  failure_urgency: NotificationTier;
+}
+
+// =============================================================================
+// Approval Gates
+// =============================================================================
+
+/**
+ * Gate urgency tier (reuses notification tiers)
+ */
+export type GateUrgency = "critical" | "review" | "ambient";
+
+/**
+ * Phase boundary identifiers
+ */
+export type PhaseBoundary =
+  | "specify_to_plan"
+  | "plan_to_tasks"
+  | "tasks_to_implement"
+  | "implement_to_complete";
+
+/**
+ * Status of an approval gate
+ */
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "auto_approved" | "timed_out";
+
+/**
+ * A pending approval gate record
+ */
+export interface PendingApproval {
+  id: number;
+  feature_id: string;
+  phase_boundary: PhaseBoundary;
+  urgency: GateUrgency;
+  status: ApprovalStatus;
+  triggered_at: string;
+  resolved_at: string | null;
+  timeout_at: string | null;
+  resolved_by: string | null;
+  rejection_reason: string | null;
+}
+
+/**
+ * Derived pending-approval.json structure
+ */
+export interface PendingApprovalFile {
+  pending: Array<{
+    feature_id: string;
+    phase_boundary: string;
+    urgency: GateUrgency;
+    triggered_at: string;
+    timeout_at: string | null;
+    status: ApprovalStatus;
+  }>;
+}
+
+/**
+ * Gate configuration from .specflow/config.yaml
+ */
+export interface GateConfig {
+  gates: Record<string, GateUrgency>;
+  timeout: Record<string, string>;
+}
+
+/**
+ * Result of evaluating a gate
+ */
+export interface GateEvalResult {
+  action: "log_and_continue" | "notify_and_wait" | "block";
+  urgency: GateUrgency;
+  boundary: PhaseBoundary;
+  timeoutMs: number | null;
+}
+
+// =============================================================================
+// Pipeline Failure Recovery
+// =============================================================================
+
+/**
+ * Artifact requirements for a single phase
+ */
+export interface ArtifactRequirement {
+  required: string[];
+  optional: string[];
+}
+
+/**
+ * Artifact requirements per phase
+ */
+export type ArtifactRequirements = Partial<Record<SpecPhase, ArtifactRequirement>>;
+
+/**
+ * Specflow project configuration from .specflow/config.yaml
+ */
+export interface SpecflowConfig {
+  artifact_requirements?: ArtifactRequirements;
+  pipeline?: {
+    max_resume_count?: number;
+  };
+  hooks?: HooksConfig;
+}
+
+/**
+ * A pipeline failure record
+ */
+export interface PipelineFailure {
+  feature_id: string;
+  phase: string;
+  missing_artifacts: string[];
+  error_message?: string;
+  last_successful_phase: string | null;
+  resume_count: number;
+  blocked_at: string;
+  resolved_at?: string | null;
+}
+
+/**
+ * Derived failure.json structure
+ */
+export interface FailureFile {
+  latest: PipelineFailure | null;
+  history: PipelineFailure[];
+}
+
+// =============================================================================
+// Execution Audit Log
+// =============================================================================
+
+/**
+ * Status of an execution log entry
+ */
+export type ExecutionStatus = "running" | "success" | "failed" | "skipped" | "blocked";
+
+/**
+ * An execution log entry tracking a single phase execution
+ */
+export interface ExecutionLogEntry {
+  id: number;
+  featureId: string;
+  phase: string;
+  startedAt: string;
+  completedAt: string | null;
+  durationSeconds: number | null;
+  status: ExecutionStatus;
+  gitShaBefore: string | null;
+  gitShaAfter: string | null;
+  artifactsProduced: string[] | null;
+  errorMessage: string | null;
+}
+
+// =============================================================================
+// Autorun
+// =============================================================================
+
+/** Options for the autorun command */
+export interface AutorunOptions {
+  maxFeatures: number;
+  delaySeconds: number;
+  dryRun: boolean;
+  continueOnError: boolean;
+  startFrom: string | null;
+}
+
+/** Result of a single phase execution within autorun */
+export interface PhaseResult {
+  success: boolean;
+  skipped: boolean;
+  blocked: boolean;
+  error: string | null;
+  artifacts: string[];
+}
+
+/** Summary of an autorun session */
+export interface AutorunSummary {
+  startedAt: Date;
+  completedAt: Date;
+  featuresProcessed: number;
+  featuresSucceeded: number;
+  featuresFailed: number;
+  featuresBlocked: number;
+  featuresSkipped: number;
+}
+
+/** Phase sequence for autorun */
+export const AUTORUN_PHASES = ["specify", "plan", "tasks", "implement", "complete"] as const;
+export type AutorunPhase = (typeof AUTORUN_PHASES)[number];
+
+// =============================================================================
+// Semantic Versioning
+// =============================================================================
+
+/**
+ * Parsed semantic version
+ */
+export interface SemVer {
+  major: number;
+  minor: number;
+  patch: number;
+  /** Raw tag string, e.g. "v1.2.3" */
+  raw: string;
+}
+
+/**
+ * Bump level for semantic versioning
+ */
+export type BumpLevel = "major" | "minor" | "patch";
+
+/**
+ * Version info including commit distance from latest tag
+ */
+export interface VersionInfo {
+  current: SemVer;
+  commitsSince: number;
+  dirty: boolean;
+}
+
+/**
+ * A single changelog entry (versioned or unreleased)
+ */
+export interface ChangelogEntry {
+  version: string;
+  date: string | null;
+  added: string[];
+  changed: string[];
+  removed: string[];
+}
+
+// =============================================================================
+// Phase Hooks
+// =============================================================================
+
+/**
+ * A hook entry -- either a simple command string or an object with options
+ */
+export type HookEntry = string | {
+  command: string;
+  timeout?: number;
+};
+
+/**
+ * Normalized hook entry with resolved timeout
+ */
+export interface NormalizedHookEntry {
+  command: string;
+  timeout: number;
+}
+
+/**
+ * Hooks configuration for a single phase
+ */
+export interface PhaseHooks {
+  pre?: HookEntry[];
+  post?: HookEntry[];
+}
+
+/**
+ * Top-level hooks configuration section
+ */
+export interface HooksConfig {
+  default_timeout?: number;
+  specify?: PhaseHooks;
+  plan?: PhaseHooks;
+  tasks?: PhaseHooks;
+  implement?: PhaseHooks;
+}
+
+/**
+ * Result of executing a single hook
+ */
+export interface HookResult {
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}
+
+/**
+ * Result of executing a batch of hooks
+ */
+export interface HookBatchResult {
+  success: boolean;
+  results: HookResult[];
+  abortedAtIndex?: number;
+}
+
+// =============================================================================
+// Evolve (F-017)
+// =============================================================================
+
+/** Artifact entry in evolve manifest */
+export interface EvolveArtifact {
+  path: string;
+  type: "source" | "test" | "config" | "migration" | "spec";
+  content_hash: string;
+}
+
+/** Manifest for evolved feature */
+export interface EvolveManifest {
+  feature_id: string;
+  feature_name: string;
+  evolved_at: string;
+  baseline_version: string;
+  spec_baseline: string;
+  spec_content_hash: string;
+  artifacts: EvolveArtifact[];
+}
+
+/** Result of evolving a feature */
+export interface EvolveResult {
+  feature_id: string;
+  feature_name: string;
+  baseline_path: string;
+  manifest_path: string;
+  spec_snapshot_path: string;
+  artifact_count: number;
+  status: "evolving";
+}
+
+// =============================================================================
+// Harden (F-019)
+// =============================================================================
+
+/** Test execution type */
+export type TestType = "automated" | "manual" | "hybrid";
+
+/** Test case status */
+export type TestStatus = "pending" | "pass" | "fail" | "skipped";
+
+/** Harden session result */
+export type HardenResult = "pass" | "fail" | "incomplete";
+
+/** Individual test case in a harden protocol */
+export interface HardenTestCase {
+  id: string;
+  description: string;
+  source: string;
+  type: TestType;
+  preconditions: string[];
+  steps: string[];
+  expectedResult: string;
+  status: TestStatus;
+  notes: string | null;
+  executedAt: string | null;
+}
+
+/** Full harden protocol */
+export interface HardenProtocol {
+  featureId: string;
+  featureName: string;
+  generatedAt: string;
+  specHash: string;
+  testCases: HardenTestCase[];
+}
+
+/** Harden session record */
+export interface HardenSession {
+  id: number;
+  featureId: string;
+  startedAt: string;
+  completedAt: string | null;
+  result: HardenResult;
+  totalTests: number;
+  passed: number;
+  failed: number;
+  skipped: number;
 }

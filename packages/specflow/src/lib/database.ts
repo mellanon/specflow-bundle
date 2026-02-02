@@ -399,6 +399,13 @@ export function updateFeatureStatus(id: string, status: FeatureStatus): void {
 
   if (status === "in_progress") {
     startedAt = now;
+  } else if (status === "evolving") {
+    // Set evolved_at timestamp
+    db.run(
+      `UPDATE features SET status = ?, evolved_at = ? WHERE id = ?`,
+      [status, now, id]
+    );
+    return;
   } else if (status === "complete") {
     completedAt = now;
     // Also set startedAt if not already set
@@ -765,6 +772,9 @@ interface FeatureRow {
   skip_justification: string | null;
   skip_validated_at: string | null;
   skip_duplicate_of: string | null;
+  // Evolve fields
+  evolved_at: string | null;
+  baseline_path: string | null;
 }
 
 interface StatsRow {
@@ -815,5 +825,8 @@ function rowToFeature(row: FeatureRow): Feature {
     skipJustification: row.skip_justification ?? undefined,
     skipValidatedAt: row.skip_validated_at ? new Date(row.skip_validated_at) : undefined,
     skipDuplicateOf: row.skip_duplicate_of ?? undefined,
+    // Evolve fields
+    evolvedAt: row.evolved_at ? new Date(row.evolved_at) : undefined,
+    baselinePath: row.baseline_path ?? undefined,
   };
 }

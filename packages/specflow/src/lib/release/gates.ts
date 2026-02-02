@@ -144,22 +144,50 @@ function evaluateGate4(
 ): GateResult {
   const inventoryPath = join(specPath, "file-inventory.md");
 
-  if (existsSync(inventoryPath)) {
+  if (!existsSync(inventoryPath)) {
     return {
       gate: 4,
-      name: "File inventory produced",
-      passed: true,
-      message: `File inventory exists: ${inventoryPath}`,
+      name: "File inventory and version tag",
+      passed: false,
+      message: "No file-inventory.md found in spec directory",
+      details: "Run 'specflow brownfield scan' to generate file inventory",
     };
   }
 
-  return {
-    gate: 4,
-    name: "File inventory produced",
-    passed: false,
-    message: "No file-inventory.md found in spec directory",
-    details: "Run 'specflow brownfield scan' to generate file inventory",
-  };
+  // Also verify a version tag exists at or after latest feature completion
+  try {
+    const result = Bun.spawnSync(["git", "tag", "--sort=-creatordate", "--list", "v*"], {
+      cwd: projectPath,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const tags = result.stdout.toString().trim().split("\n").filter(Boolean);
+
+    if (tags.length === 0) {
+      return {
+        gate: 4,
+        name: "File inventory and version tag",
+        passed: false,
+        message: "File inventory exists but no version tag found",
+        details: "Create a version tag (e.g., git tag v1.0.0) at or after feature completion",
+      };
+    }
+
+    return {
+      gate: 4,
+      name: "File inventory and version tag",
+      passed: true,
+      message: `File inventory exists, version tag found: ${tags[0]}`,
+    };
+  } catch {
+    return {
+      gate: 4,
+      name: "File inventory and version tag",
+      passed: false,
+      message: "File inventory exists but could not verify version tags",
+      details: "Ensure git is available and create a version tag",
+    };
+  }
 }
 
 // =============================================================================

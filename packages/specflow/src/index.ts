@@ -33,6 +33,17 @@ import { contribPrepCommand } from "./commands/contrib-prep";
 import { brownfieldCommand } from "./commands/brownfield";
 import { reviewCommand } from "./commands/review";
 import { releaseCommand } from "./commands/release";
+import { approveCommand } from "./commands/approve";
+import { rejectCommand } from "./commands/reject";
+import { pendingCommand } from "./commands/pending";
+import { pipelineResumeCommand } from "./commands/pipeline-resume";
+import { logCommand } from "./commands/log";
+import { rollbackCommand } from "./commands/rollback";
+import { autorunCommand } from "./commands/autorun";
+import { versionCommand } from "./commands/version";
+import { evolveCommand } from "./commands/evolve";
+import { requestChangesCommand } from "./commands/request-changes";
+import { hardenCommand } from "./commands/harden";
 
 // =============================================================================
 // Main Program
@@ -86,6 +97,9 @@ program
   .command("status")
   .description("Show feature queue and progress")
   .option("--json", "Output as JSON")
+  .option("--brief", "One-line summary for sharing")
+  .option("--watch", "Live-updating view (polls every 5s)")
+  .option("--persist", "Keep --watch open after pipeline completes")
   .action(statusCommand);
 
 program
@@ -250,6 +264,93 @@ reviewCommand(program);
 
 // Register release command
 releaseCommand(program);
+
+// Register version command group
+versionCommand(program);
+
+program
+  .command("approve")
+  .description("Approve a pending gate for a feature")
+  .argument("<feature-id>", "Feature ID to approve (e.g., F-1)")
+  .action(approveCommand);
+
+program
+  .command("reject")
+  .description("Reject a pending gate for a feature")
+  .argument("<feature-id>", "Feature ID to reject (e.g., F-1)")
+  .option("--reason <text>", "Reason for rejection (required)")
+  .action((featureId, options) => rejectCommand(featureId, { reason: options.reason }));
+
+program
+  .command("pending")
+  .description("List all pending approval gates")
+  .action(pendingCommand);
+
+const pipelineCmd = program
+  .command("pipeline")
+  .description("Pipeline management commands");
+
+pipelineCmd
+  .command("resume")
+  .description("Resume a blocked pipeline from the last successful phase")
+  .argument("<feature-id>", "Feature ID to resume (e.g., F-1)")
+  .action(pipelineResumeCommand);
+
+program
+  .command("log")
+  .description("Display execution timeline for a feature")
+  .argument("<feature-id>", "Feature ID to show log for (e.g., F-1)")
+  .option("--json", "Output as JSON")
+  .action((featureId, options) => logCommand(featureId, { json: options.json }));
+
+program
+  .command("rollback")
+  .description("Rollback a feature to a specific phase using git SHA tracking")
+  .argument("<feature-id>", "Feature ID to rollback (e.g., F-1)")
+  .option("--to-phase <phase>", "Phase to rollback to (specify, plan, tasks, implement)")
+  .option("--confirm", "Confirm the destructive rollback operation")
+  .action((featureId, options) => rollbackCommand(featureId, { toPhase: options.toPhase, confirm: options.confirm }));
+
+program
+  .command("autorun")
+  .description("Drive all pending features through the full lifecycle (specify -> plan -> tasks -> implement -> complete)")
+  .option("--dry-run", "Show planned phases without executing")
+  .option("--max-features <n>", "Limit features processed (0 = unlimited)")
+  .option("--continue-on-error", "Skip failed features and continue")
+  .option("--start-from <id>", "Start from a specific feature ID")
+  .option("--delay <seconds>", "Delay between features in seconds", "3")
+  .action((options) => autorunCommand({
+    dryRun: options.dryRun,
+    maxFeatures: options.maxFeatures,
+    continueOnError: options.continueOnError,
+    startFrom: options.startFrom,
+    delay: options.delay,
+  }));
+
+program
+  .command("evolve")
+  .description("Evolve a completed feature into a new iteration")
+  .argument("<feature-id>", "Feature ID to evolve (e.g., F-1)")
+  .option("--dry-run", "Show what would happen without executing")
+  .option("--json", "Output as JSON")
+  .action((featureId, options) => evolveCommand(featureId, { dryRun: options.dryRun, json: options.json }));
+
+program
+  .command("request-changes")
+  .description("Request changes on a feature pending approval")
+  .argument("<feature-id>", "Feature ID to request changes on (e.g., F-1)")
+  .option("--reason <text>", "Reason for requesting changes (required)")
+  .action((featureId, options) => requestChangesCommand(featureId, { reason: options.reason }));
+
+program
+  .command("harden")
+  .description("Run guided acceptance testing protocol against spec criteria")
+  .argument("[feature-id]", "Feature ID to harden (e.g., F-1)")
+  .option("--dry-run", "Generate protocol without interactive session")
+  .option("--all", "Harden all features at implement phase")
+  .option("--headless", "Autonomous AI-powered evaluation (no interactive prompts)")
+  .option("--status", "Show hardening progress across all features")
+  .action((featureId, options) => hardenCommand(featureId, { dryRun: options.dryRun, all: options.all, headless: options.headless, status: options.status }));
 
 program
   .command("ui")
