@@ -1,0 +1,104 @@
+[
+  {
+    "id": "F-1",
+    "name": "Delta-spec SQLite schema and migration",
+    "description": "Add spec_versions and spec_deltas tables to the SpecFlow SQLite database. spec_versions tracks version number, timestamp, content hash per feature. spec_deltas tracks change_type (ADDED/MODIFIED/REMOVED), section path, and diff content between version pairs. Include migration in the existing migrate command.",
+    "priority": 1
+  },
+  {
+    "id": "F-2",
+    "name": "Spec versioning — snapshot on phase completion",
+    "description": "When a feature completes the SPECIFY phase (spec.md written), automatically create a version snapshot in spec_versions. When spec is revised via `specflow revise`, create a new version and compute delta records in spec_deltas. This gives every spec a version history without manual intervention.",
+    "dependencies": ["F-1"],
+    "priority": 1
+  },
+  {
+    "id": "F-3",
+    "name": "Brownfield codebase scanner",
+    "description": "New `specflow brownfield scan` subcommand that analyzes an existing codebase directory and extracts a structural inventory: files, exports, functions, types, dependencies. Output is a JSON manifest stored in .specify/brownfield/scan.json. Uses AST parsing for TypeScript or falls back to heuristic extraction for other languages.",
+    "dependencies": ["F-1"],
+    "priority": 2
+  },
+  {
+    "id": "F-4",
+    "name": "Brownfield delta-spec generator",
+    "description": "New `specflow brownfield diff` subcommand that compares the codebase scan (from F-3) against the latest spec baseline and produces a delta-spec showing ADDED/MODIFIED/REMOVED elements. Uses AI (headless Claude) to classify changes semantically, not just structurally. Output: delta-spec.md with categorized changes and proposed spec updates.",
+    "dependencies": ["F-2", "F-3"],
+    "priority": 2
+  },
+  {
+    "id": "F-5",
+    "name": "Brownfield spec evolution — apply delta to create new version",
+    "description": "New `specflow brownfield apply` subcommand that takes a reviewed delta-spec and applies approved changes to create a new spec version. Human approves each change category (ADDED/MODIFIED/REMOVED) via interactive prompts (or auto-approve in headless mode). Committed version stored in spec_versions with full delta trail.",
+    "dependencies": ["F-4"],
+    "priority": 2
+  },
+  {
+    "id": "F-6",
+    "name": "Review command — automated checks layer",
+    "description": "New `specflow review` command, layer 1: run automated checks (typecheck, lint, test) and verify spec-code file alignment (do files referenced in spec exist? do exports match?). Produces review.md artifact in .specify/reviews/ with pass/fail per check.",
+    "priority": 3
+  },
+  {
+    "id": "F-7",
+    "name": "Review command — AI spec-code alignment verification",
+    "description": "Layer 2 of `specflow review`: AI-powered analysis (headless Claude) that reads spec.md and the implementation code, then evaluates whether the code faithfully implements the specification. Extends the Doctorow Gate pattern to review scope. Appends findings to review.md.",
+    "dependencies": ["F-6"],
+    "priority": 3
+  },
+  {
+    "id": "F-8",
+    "name": "Review command — structured human review template",
+    "description": "Layer 3 of `specflow review`: generates a structured review template for human reviewers with sections pre-filled from automated and AI findings. Includes checklist items, risk areas flagged by AI, and a sign-off section. Output appended to review.md.",
+    "dependencies": ["F-7"],
+    "priority": 3
+  },
+  {
+    "id": "F-9",
+    "name": "Release command — gate evaluation engine",
+    "description": "New `specflow release` command that evaluates 8 gates sequentially: (1) all features complete, (2) quality evals pass, (3) CHANGELOG generated from spec deltas, (4) file inventory produced. Stops on first failure with actionable guidance. Produces release-readiness.md report.",
+    "dependencies": ["F-2"],
+    "priority": 4
+  },
+  {
+    "id": "F-10",
+    "name": "Release command — contribution packaging",
+    "description": "Gates 5-8 of `specflow release`: (5) PII/secrets scan, (6) contribution branch creation from upstream/main, (7) sanitization verification (no personal paths, no credentials), (8) PR template generation. Integrates with existing contrib-prep command. Output: ready-to-push branch with PR description.",
+    "dependencies": ["F-9"],
+    "priority": 4
+  },
+  {
+    "id": "F-11",
+    "name": "Pipeline progress file — inter-session visibility",
+    "description": "During headless pipeline execution, write a structured progress file at .specify/pipeline/progress.json, updated at each phase transition. Schema: { feature_id, current_phase, status (running|paused|blocked|complete), started_at, phases: [{ name, status, started_at, completed_at, duration_seconds, artifacts_produced }], errors: [] }. File is the single source of truth for pipeline state — other sessions, the specflow-ui dashboard, and the PAI observability server (port 4000) can all consume it. New `specflow status` command reads progress.json and renders a summary. New `specflow status --watch` polls every 5 seconds and renders a live updating view. This is the VISIBILITY primitive — passive ambient mode, never interrupts the operator.",
+    "priority": 2
+  },
+  {
+    "id": "F-12",
+    "name": "Phase transition notifications — three-tier multi-channel alerts",
+    "description": "Notification system with three urgency tiers from the council debate UX design. CRITICAL tier: voice server (curl localhost:8888) + macOS desktop notification (osascript) + terminal-blocking prompt. REVIEW tier: voice server + desktop notification, no terminal block. AMBIENT tier: log entry only, no interruption. Each phase transition emits a notification at the configured tier. Configuration in .specflow/config.yaml: notification_backends (array of: voice, desktop, webhook), default_urgency_by_phase (map of phase→tier), custom webhook URL. Notifications are fire-and-forget — delivery failure never blocks pipeline. Trust model: v1 defaults to REVIEW tier for all phase completions and CRITICAL for failures (start noisy, operator tunes down). Observability integration: emit structured event to progress.json that the PAI observability server can ingest.",
+    "dependencies": ["F-11"],
+    "priority": 2
+  },
+  {
+    "id": "F-13",
+    "name": "Approval gates — annotation-driven human-in-the-loop",
+    "description": "Configurable approval gates at phase boundaries, driven by annotations in spec files or pipeline config. Spec authors declare urgency: @interrupt:critical (terminal-blocking — pipeline pauses, operator must run `specflow approve F-N` or `specflow reject F-N --reason`), @interrupt:review (push notification — pipeline pauses but operator is only alerted, not blocked in terminal), @interrupt:ambient (logged only — pipeline continues). Gate config in .specflow/config.yaml: gates map of phase_boundary→urgency_tier, with override per feature. When gate triggers: write structured JSON to .specify/pipeline/pending-approval.json with { feature_id, gate, phase_from, phase_to, urgency, summary, artifacts_to_review, requested_at }. Pipeline outputs structured JSON (NOT exit codes) indicating awaiting_approval state. The specflow-ui dashboard shows pending approvals with one-click approve/reject. Timeout per gate configurable: default is wait-indefinitely for critical, 30min for review (auto-approve on timeout).",
+    "dependencies": ["F-11", "F-12"],
+    "priority": 3
+  },
+  {
+    "id": "F-14",
+    "name": "Pipeline failure recovery — graceful degradation and resume",
+    "description": "Resilient pipeline execution with configurable artifact requirements per phase. Configuration in .specflow/config.yaml: artifact_requirements map of phase→{ required: [filenames], optional: [filenames] }. Defaults: SPECIFY requires spec.md; PLAN requires plan.md, optional architecture.md; TASKS requires tasks.md; IMPLEMENT requires source code and tests, optional docs.md and verify.md; COMPLETE requires Doctorow gate pass. When a required artifact is missing, pipeline sets feature status to 'blocked' (recoverable, not terminal failure), writes error context to .specify/pipeline/failure.json with { feature_id, phase, error, missing_artifacts, suggestion, git_sha_at_failure }, and emits CRITICAL notification. When an optional artifact is missing, pipeline logs a warning and continues. New `specflow pipeline resume F-N` command picks up from the last successful phase using progress.json state. This directly addresses the dogfooding issue where headless pipeline crashed on missing docs.md.",
+    "dependencies": ["F-11", "F-12"],
+    "priority": 2
+  },
+  {
+    "id": "F-15",
+    "name": "Execution audit log — phase-level tracking in SQLite",
+    "description": "New execution_log table in features.db with columns: id (auto), feature_id (text), phase (text), started_at (datetime), completed_at (datetime), duration_seconds (integer), status (text: success|failed|skipped|blocked), git_sha_before (text), git_sha_after (text), artifacts_produced (json array), error_message (text nullable), urgency_tier (text nullable), approval_status (text nullable: approved|rejected|auto-approved|timeout). Migration 008. Every pipeline phase execution writes a row on start (status=running) and updates on completion. `specflow log F-N` renders execution history as a timeline. `specflow log F-N --phase implement` shows details for a specific phase. Git SHA tracking enables rollback: `specflow rollback F-N --to-phase plan` resets to git_sha_before of the implement phase. The specflow-ui dashboard consumes this table for the phase timeline visualization.",
+    "dependencies": ["F-1"],
+    "priority": 3
+  }
+]
