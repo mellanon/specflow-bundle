@@ -152,8 +152,8 @@ async function reviewSingleFeature(
   const reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
   writeReviewJson(projectPath, featureId, reviewResult);
 
-  // Layer 3: Human Review Template — only if not skipped
-  if (!options.skipHuman && !options.checksOnly) {
+  // Layer 3: Human Review Template — HITL by exception: only for failures
+  if (!options.skipHuman && !options.checksOnly && !reviewResult.passed) {
     appendHumanReviewTemplate(reviewPath, automatedResult, aiResult);
   }
 
@@ -206,7 +206,7 @@ function showReviewStatus(projectPath: string): void {
 // =============================================================================
 
 async function reviewAll(projectPath: string, options: ReviewOptions): Promise<void> {
-  const features = getFeatures().filter((f) => f.specPath);
+  const features = getFeatures().filter((f) => f.specPath && (f.phase === "implement" || f.status === "complete"));
 
   if (features.length === 0) {
     console.log("No features with specs found for review.");
@@ -383,11 +383,11 @@ async function reviewCommandHandler(
     const reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
     writeReviewJson(projectPath, featureId, reviewResult);
 
-    // Layer 3
-    if (!options.skipHuman) {
+    // Layer 3 — HITL by exception: only for failures
+    if (!options.skipHuman && !reviewResult.passed) {
       console.log("\n--- Layer 3: Human Review Template ---\n");
       appendHumanReviewTemplate(reviewPath, automatedResult, aiResult);
-      console.log("  + Human review template appended");
+      console.log("  + Human review template appended (review failed)");
     }
 
     // Summary
