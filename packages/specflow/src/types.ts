@@ -873,6 +873,33 @@ export interface EvolveResult {
 }
 
 // =============================================================================
+// Review (F-024)
+// =============================================================================
+
+/** Structured review result written as review.json per feature */
+export interface ReviewResult {
+  featureId: string;
+  reviewedAt: string;
+  passed: boolean;
+  automatedChecks: {
+    passed: boolean;
+    checks: { name: string; passed: boolean; duration: number }[];
+    alignment: { matched: number; missing: number };
+  };
+  aiReview: {
+    passed: boolean;
+    score: number;
+    findings: { severity: string; area: string; description: string }[];
+  } | null;
+  summary: {
+    checksPass: boolean;
+    aiPass: boolean | null;
+    score: number | null;
+    findingsCount: { critical: number; warning: number; info: number };
+  };
+}
+
+// =============================================================================
 // Harden (F-019)
 // =============================================================================
 
