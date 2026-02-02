@@ -589,10 +589,25 @@ export function updateFeatureSpecPath(id: string, specPath: string): void {
 export function validateSpecPathOwnership(featureId: string, specPath: string): string | null {
   const normalizedId = featureId.toLowerCase();
   const normalizedPath = specPath.toLowerCase();
-  if (!normalizedPath.includes(normalizedId)) {
-    return `specPath mismatch: feature ${featureId} has specPath "${specPath}" which does not contain "${normalizedId}". This may indicate cross-wired spec paths.`;
+
+  // Direct match (e.g., f-024 in path)
+  if (normalizedPath.includes(normalizedId)) {
+    return null;
   }
-  return null;
+
+  // Handle zero-padding mismatch: F-11 → f-11 should match f-011
+  // Extract the numeric part and check with zero-padded variants
+  const match = normalizedId.match(/^(f-)(\d+)$/);
+  if (match) {
+    const num = match[2];
+    const padded3 = num.padStart(3, "0");
+    const padded2 = num.padStart(2, "0");
+    if (normalizedPath.includes(`f-${padded3}`) || normalizedPath.includes(`f-${padded2}`)) {
+      return null;
+    }
+  }
+
+  return `specPath mismatch: feature ${featureId} has specPath "${specPath}" which does not contain "${normalizedId}". This may indicate cross-wired spec paths.`;
 }
 
 /**
