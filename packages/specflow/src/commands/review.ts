@@ -14,6 +14,7 @@ import {
   getFeatures,
   getDbPath,
   dbExists,
+  validateSpecPathOwnership,
 } from "../lib/database";
 import {
   runAutomatedChecks,
@@ -120,6 +121,12 @@ async function reviewSingleFeature(
 
   if (!feature.specPath) {
     throw new Error(`Feature ${featureId} has no spec.`);
+  }
+
+  // Guard: verify specPath belongs to this feature (catches cross-wired DB entries)
+  const ownershipError = validateSpecPathOwnership(featureId, feature.specPath);
+  if (ownershipError) {
+    throw new Error(ownershipError);
   }
 
   const specFile = join(feature.specPath, "spec.md");

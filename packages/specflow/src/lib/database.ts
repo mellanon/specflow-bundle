@@ -582,6 +582,20 @@ export function updateFeatureSpecPath(id: string, specPath: string): void {
 }
 
 /**
+ * Validate that a feature's specPath contains its ID.
+ * Catches cross-wired specPaths (e.g., F-024 pointing to F-023's spec).
+ * Returns null if valid, or an error message if mismatched.
+ */
+export function validateSpecPathOwnership(featureId: string, specPath: string): string | null {
+  const normalizedId = featureId.toLowerCase();
+  const normalizedPath = specPath.toLowerCase();
+  if (!normalizedPath.includes(normalizedId)) {
+    return `specPath mismatch: feature ${featureId} has specPath "${specPath}" which does not contain "${normalizedId}". This may indicate cross-wired spec paths.`;
+  }
+  return null;
+}
+
+/**
  * Update a feature's priority
  */
 export function updateFeaturePriority(id: string, priority: number): void {

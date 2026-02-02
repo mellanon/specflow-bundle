@@ -14,6 +14,7 @@ import {
   getDbPath,
   dbExists,
   getDbInstance,
+  validateSpecPathOwnership,
 } from "../lib/database";
 import { parseSpec } from "../lib/harden/spec-parser";
 import { writeProtocol, computeSpecHash } from "../lib/harden/protocol-writer";
@@ -64,6 +65,13 @@ async function hardenSingleFeature(
 
   if (!feature.specPath) {
     console.error(`Error: Feature ${featureId} has no spec path.`);
+    process.exit(1);
+  }
+
+  // Guard: verify specPath belongs to this feature (catches cross-wired DB entries)
+  const ownershipError = validateSpecPathOwnership(featureId, feature.specPath);
+  if (ownershipError) {
+    console.error(`Error: ${ownershipError}`);
     process.exit(1);
   }
 
