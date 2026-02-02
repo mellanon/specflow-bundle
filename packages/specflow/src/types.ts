@@ -920,3 +920,85 @@ export interface HardenSession {
   failed: number;
   skipped: number;
 }
+
+// =============================================================================
+// Harden Autorun — F-023: Iterative Evaluate-Fix-Retest Loop
+// =============================================================================
+
+/** Triage classification category */
+export type TriageCategory = "bug" | "spec-gap" | "accept";
+
+/** Result of evaluating all test cases against implementation */
+export interface EvaluationResult {
+  featureId: string;
+  evaluatedAt: string;
+  protocolHash: string;
+  testCases: EvaluationTestCase[];
+  summary: {
+    total: number;
+    pass: number;
+    fail: number;
+    skip: number;
+  };
+}
+
+/** A single evaluated test case */
+export interface EvaluationTestCase {
+  id: string;
+  status: "pass" | "fail" | "skip";
+  evidence: string;
+  notes: string | null;
+}
+
+/** Result of triaging evaluation failures */
+export interface TriageResult {
+  featureId: string;
+  triagedAt: string;
+  decisions: TriageDecision[];
+  summary: {
+    bugs: number;
+    specGaps: number;
+    accepted: number;
+  };
+}
+
+/** A single triage decision for a failed test case */
+export interface TriageDecision {
+  testCaseId: string;
+  category: TriageCategory;
+  reasoning: string;
+  suggestedFix: string | null;
+  suggestedAmendment: string | null;
+  justification: string | null;
+}
+
+/** Collection of fix descriptors for bug-classified failures */
+export interface FixDescriptors {
+  featureId: string;
+  generatedAt: string;
+  descriptors: FixDescriptor[];
+}
+
+/** A single fix descriptor */
+export interface FixDescriptor {
+  testCaseId: string;
+  filePath: string;
+  description: string;
+  suggestedChange: string;
+  codeContext: string | null;
+}
+
+/** Result of convergence check */
+export interface ConvergenceResult {
+  featureId: string;
+  checkedAt: string;
+  converged: boolean;
+  summary: {
+    total: number;
+    pass: number;
+    accepted: number;
+    bugs: number;
+    specGaps: number;
+    remainingFailures: number;
+  };
+}

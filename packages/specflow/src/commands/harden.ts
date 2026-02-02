@@ -19,12 +19,23 @@ import { parseSpec } from "../lib/harden/spec-parser";
 import { writeProtocol, computeSpecHash } from "../lib/harden/protocol-writer";
 import { writeReport } from "../lib/harden/report-writer";
 import { createSession, findIncompleteSession, runInteractiveSession, runHeadlessSession } from "../lib/harden/harden-session";
+import { runEvaluation } from "../lib/harden/evaluate";
+import { runTriage } from "../lib/harden/triage";
+import { generateFixDescriptors } from "../lib/harden/fix-gen";
+import { runRetest } from "../lib/harden/retest";
+import { checkConvergence } from "../lib/harden/convergence";
+import { readEvaluationOptional, readTriageOptional, readConvergenceOptional } from "../lib/harden/artifacts";
 
 export interface HardenCommandOptions {
   dryRun?: boolean;
   all?: boolean;
   headless?: boolean;
   status?: boolean;
+  evaluate?: boolean;
+  triage?: boolean;
+  fix?: boolean;
+  retest?: boolean;
+  check?: boolean;
 }
 
 /**
@@ -209,6 +220,127 @@ function showHardenStatus(projectPath: string): void {
     `  ${"TOTAL".padEnd(10)} ${String(totalAll).padStart(5)} ${String(totalPass).padStart(5)} ${String(totalFail).padStart(5)} ${String(totalSkip).padStart(5)} ${String(totalPending).padStart(5)}`
   );
   console.log("");
+
+  // F-023: Show JSON artifact status if available
+  let hasArtifacts = false;
+  for (const dir of dirs) {
+    const fid = dir.toUpperCase();
+    const evaluation = readEvaluationOptional(projectPath, fid);
+    const triageData = readTriageOptional(projectPath, fid);
+    const convergence = readConvergenceOptional(projectPath, fid);
+
+    if (evaluation || triageData || convergence) {
+      if (!hasArtifacts) {
+        console.log("  Artifact Status:");
+        console.log(`  ${"─".repeat(56)}`);
+        hasArtifacts = true;
+      }
+      const parts: string[] = [`  ${fid.padEnd(10)}`];
+      if (evaluation) {
+        parts.push(`eval: ${evaluation.summary.pass}/${evaluation.summary.total} pass`);
+      }
+      if (triageData) {
+        parts.push(`triage: ${triageData.summary.bugs}b/${triageData.summary.specGaps}sg/${triageData.summary.accepted}a`);
+      }
+      if (convergence) {
+        parts.push(convergence.converged ? "CONVERGED" : "NOT CONVERGED");
+      }
+      console.log(parts.join("  "));
+    }
+  }
+  if (hasArtifacts) console.log("");
+}
+
+/**
+ * Handle atomic subcommands (F-023)
+ */
+async function handleAtomicSubcommand(
+  projectPath: string,
+  featureId: string,
+  options: HardenCommandOptions
+): Promise<void> {
+  // --evaluate --all: batch mode
+  if (options.evaluate && options.all) {
+    const features = getFeatures().filter((f) => f.phase === "implement" || f.phase === "tasks");
+    if (features.length === 0) {
+      console.log("No features at implement/tasks phase for evaluation.");
+      return;
+    }
+    let hasFailures = false;
+    for (const f of features) {
+      if (!f.specPath) continue;
+      console.log(`\n  Evaluating: ${f.id} - ${f.name}`);
+      const result = runEvaluation(projectPath, f.id, f.specPath);
+      if (result.summary.fail > 0) hasFailures = true;
+    }
+    if (hasFailures) process.exit(1);
+    return;
+  }
+
+  // All other subcommands require a feature ID
+  if (!featureId) {
+    console.error("Error: Feature ID required for this subcommand.");
+    process.exit(1);
+  }
+
+  const feature = getFeature(featureId);
+  if (!feature) {
+    console.error(`Error: Feature ${featureId} not found.`);
+    process.exit(1);
+  }
+
+  if (options.evaluate) {
+    if (!feature.specPath) {
+      console.error(`Error: Feature ${featureId} has no spec path.`);
+      process.exit(1);
+    }
+    console.log(`\n  Evaluate: ${featureId} - ${feature.name}\n`);
+    const result = runEvaluation(projectPath, featureId, feature.specPath);
+    if (result.summary.fail > 0) process.exit(1);
+    return;
+  }
+
+  if (options.triage) {
+    console.log(`\n  Triage: ${featureId} - ${feature.name}\n`);
+    const result = runTriage(projectPath, featureId);
+    if (result.summary.bugs > 0) process.exit(1);
+    return;
+  }
+
+  if (options.fix) {
+    console.log(`\n  Fix: ${featureId} - ${feature.name}\n`);
+    generateFixDescriptors(projectPath, featureId);
+    // Always exit 0
+    return;
+  }
+
+  if (options.retest) {
+    if (!feature.specPath) {
+      console.error(`Error: Feature ${featureId} has no spec path.`);
+      process.exit(1);
+    }
+    console.log(`\n  Retest: ${featureId} - ${feature.name}\n`);
+    const result = runRetest(projectPath, featureId, feature.specPath);
+    // Check if all pass or accepted
+    const triage = readTriageOptional(projectPath, featureId);
+    const acceptedIds = new Set(
+      (triage?.decisions || [])
+        .filter((d) => d.category === "accept")
+        .map((d) => d.testCaseId)
+    );
+    const hasFailures = result.testCases.some(
+      (tc) => tc.status !== "pass" && !acceptedIds.has(tc.id)
+    );
+    if (hasFailures) process.exit(1);
+    return;
+  }
+
+  if (options.check) {
+    console.log(`\n  Check: ${featureId} - ${feature.name}\n`);
+    const result = checkConvergence(projectPath, featureId);
+    if (!result.converged) process.exit(1);
+    return;
+  }
 }
 
 /**
@@ -222,6 +354,30 @@ export async function hardenCommand(
 
   if (options.status) {
     showHardenStatus(projectPath);
+    return;
+  }
+
+  // Mutual exclusion check for atomic subcommands
+  const subcommandFlags = [options.evaluate, options.triage, options.fix, options.retest, options.check]
+    .filter(Boolean);
+  if (subcommandFlags.length > 1) {
+    console.error("Error: Only one subcommand flag (--evaluate, --triage, --fix, --retest, --check) at a time.");
+    process.exit(1);
+  }
+
+  // Handle atomic subcommands (F-023)
+  if (options.evaluate || options.triage || options.fix || options.retest || options.check) {
+    if (!dbExists(projectPath)) {
+      console.error("Error: No SpecFlow database found. Run 'specflow init' first.");
+      process.exit(1);
+    }
+    const dbPath = getDbPath(projectPath);
+    try {
+      initDatabase(dbPath);
+      await handleAtomicSubcommand(projectPath, featureId, options);
+    } finally {
+      closeDatabase();
+    }
     return;
   }
 

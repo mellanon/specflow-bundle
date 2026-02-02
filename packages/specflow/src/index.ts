@@ -350,7 +350,22 @@ program
   .option("--all", "Harden all features at implement phase")
   .option("--headless", "Autonomous AI-powered evaluation (no interactive prompts)")
   .option("--status", "Show hardening progress across all features")
-  .action((featureId, options) => hardenCommand(featureId, { dryRun: options.dryRun, all: options.all, headless: options.headless, status: options.status }));
+  .option("--evaluate", "Run evaluation against test protocol (outputs evaluation.json)")
+  .option("--triage", "Classify failures into bug/spec-gap/accept (outputs triage.json)")
+  .option("--fix", "Generate fix descriptors for bugs (outputs fixes.json)")
+  .option("--retest", "Re-evaluate only previously-failed cases (updates evaluation.json)")
+  .option("--check", "Report convergence status (outputs convergence.json)")
+  .action((featureId, options) => hardenCommand(featureId, {
+    dryRun: options.dryRun,
+    all: options.all,
+    headless: options.headless,
+    status: options.status,
+    evaluate: options.evaluate,
+    triage: options.triage,
+    fix: options.fix,
+    retest: options.retest,
+    check: options.check,
+  }));
 
 program
   .command("ui")
