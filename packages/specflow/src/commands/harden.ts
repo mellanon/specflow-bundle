@@ -25,6 +25,7 @@ import { generateFixDescriptors } from "../lib/harden/fix-gen";
 import { runRetest } from "../lib/harden/retest";
 import { checkConvergence } from "../lib/harden/convergence";
 import { readEvaluationOptional, readTriageOptional, readConvergenceOptional } from "../lib/harden/artifacts";
+import type { HardenSession } from "../types";
 
 export interface HardenCommandOptions {
   dryRun?: boolean;

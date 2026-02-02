@@ -107,7 +107,7 @@ describe("status command", () => {
 
     expect(exitCode).toBe(0);
     const json = JSON.parse(stdout);
-    expect(json.stats.total).toBe(1);
+    expect(json.summary.total).toBe(1);
     expect(json.features).toHaveLength(1);
     expect(json.features[0].id).toBe("F-1");
   });

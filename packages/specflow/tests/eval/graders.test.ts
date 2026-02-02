@@ -288,7 +288,7 @@ describe("Grader Interface", () => {
     });
 
     it("should pass context.projectPath to grader", async () => {
-      let capturedContext: GradeContext | null = null;
+      let capturedContext: GradeContext | null = null as GradeContext | null;
 
       const grader: Grader = {
         name: "context-capture",
