@@ -879,6 +879,7 @@ export interface EvolveResult {
 /** Structured review result written as review.json per feature */
 export interface ReviewResult {
   featureId: string;
+  featureName?: string;
   reviewedAt: string;
   passed: boolean;
   automatedChecks: {

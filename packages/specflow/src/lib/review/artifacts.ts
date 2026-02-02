@@ -78,53 +78,85 @@ export function generateReviewReport(projectPath: string): string {
   const avgScore = sorted.length > 0 ? (totalScore / sorted.length) * 100 : 0;
   const totalCritical = sorted.reduce((sum, r) => sum + r.summary.findingsCount.critical, 0);
 
+  const totalWarnings = sorted.reduce((sum, r) => sum + r.summary.findingsCount.warning, 0);
+  const totalInfo = sorted.reduce((sum, r) => sum + r.summary.findingsCount.info, 0);
+  const checksWithScores = sorted.filter((r) => r.summary.score !== null && r.summary.score > 0);
+  const realAvgScore = checksWithScores.length > 0
+    ? (checksWithScores.reduce((sum, r) => sum + (r.summary.score ?? 0), 0) / checksWithScores.length) * 100
+    : null;
+
   const lines: string[] = [];
 
   lines.push("# SpecFlow Review Report");
   lines.push("");
-  lines.push(`Generated: ${new Date().toISOString()}`);
-  lines.push("");
-  lines.push("## Summary");
-  lines.push("");
-  lines.push("| Metric | Value |");
-  lines.push("|--------|-------|");
-  lines.push(`| Features Reviewed | ${sorted.length} |`);
-  lines.push(`| Passed | ${passed.length} |`);
-  lines.push(`| Failed | ${failed.length} |`);
-  lines.push(`| Average Score | ${avgScore.toFixed(0)}% |`);
-  lines.push(`| Critical Findings | ${totalCritical} |`);
-  lines.push("");
-  lines.push("## Results");
+  lines.push(`**Generated:** ${new Date().toISOString()}`);
   lines.push("");
 
-  // Passed section (collapsed)
-  lines.push(`### Passed (${passed.length})`);
+  // Summary
+  lines.push("## Summary");
   lines.push("");
-  if (passed.length === 0) {
-    lines.push("_None_");
-  } else {
-    for (const r of passed) {
-      const scoreStr = r.summary.score !== null ? `${(r.summary.score * 100).toFixed(0)}%` : "-";
-      lines.push(`- ${r.featureId} — ${scoreStr}`);
+  lines.push(`| Metric | Value |`);
+  lines.push(`|--------|-------|`);
+  lines.push(`| Features Reviewed | ${sorted.length} |`);
+  lines.push(`| Passed | **${passed.length}** |`);
+  lines.push(`| Failed | **${failed.length}** |`);
+  lines.push(`| AI Alignment Score | ${realAvgScore !== null ? `${realAvgScore.toFixed(0)}%` : "_not run_"} |`);
+  lines.push(`| Critical Findings | ${totalCritical} |`);
+  lines.push(`| Warnings | ${totalWarnings} |`);
+  lines.push(`| Info | ${totalInfo} |`);
+  lines.push("");
+
+  // Automated checks summary (project-wide)
+  if (sorted.length > 0 && sorted[0].automatedChecks.checks.length > 0) {
+    lines.push("## Automated Checks (Project-Wide)");
+    lines.push("");
+    for (const c of sorted[0].automatedChecks.checks) {
+      const icon = c.passed ? "+" : "x";
+      lines.push(`- ${icon} **${c.name}** (${c.duration}ms)`);
     }
+    lines.push("");
+  }
+
+  // Results table — all features at a glance
+  lines.push("## Feature Results");
+  lines.push("");
+  lines.push(`| Feature | Name | Result | Score | Files | Findings |`);
+  lines.push(`|---------|------|--------|-------|-------|----------|`);
+  for (const r of sorted) {
+    const name = r.featureName || "";
+    const result = r.passed ? "PASS" : "**FAIL**";
+    const scoreStr = r.summary.score !== null && r.summary.score > 0
+      ? `${(r.summary.score * 100).toFixed(0)}%`
+      : "-";
+    const files = `${r.automatedChecks.alignment.matched}/${r.automatedChecks.alignment.matched + r.automatedChecks.alignment.missing}`;
+    const fc = r.summary.findingsCount;
+    const findingsStr = fc.critical + fc.warning + fc.info > 0
+      ? `${fc.critical}c ${fc.warning}w ${fc.info}i`
+      : "-";
+    lines.push(`| ${r.featureId} | ${name.substring(0, 40)} | ${result} | ${scoreStr} | ${files} | ${findingsStr} |`);
   }
   lines.push("");
 
-  // Failed section (expanded)
-  lines.push(`### Needs Attention (${failed.length})`);
-  lines.push("");
-  if (failed.length === 0) {
-    lines.push("_None_");
-  } else {
+  // Failed features — expanded detail
+  if (failed.length > 0) {
+    lines.push("## Needs Attention");
+    lines.push("");
+
     for (const r of failed) {
-      const scoreStr = r.summary.score !== null ? `${(r.summary.score * 100).toFixed(0)}%` : "-";
-      lines.push(`#### ${r.featureId} — FAIL — ${scoreStr}`);
+      const name = r.featureName || r.featureId;
+      const scoreStr = r.summary.score !== null && r.summary.score > 0
+        ? `${(r.summary.score * 100).toFixed(0)}%`
+        : "no score";
+      lines.push(`### ${r.featureId} — ${name} (${scoreStr})`);
       lines.push("");
 
       // Automated checks
       const ac = r.automatedChecks;
       lines.push(`**Automated Checks:** ${ac.passed ? "pass" : "fail"}`);
-      lines.push(`- Alignment: ${ac.alignment.matched} matched, ${ac.alignment.missing} missing`);
+      if (ac.alignment.missing > 0) {
+        lines.push(`- Missing files: ${ac.alignment.missing}`);
+      }
+      lines.push(`- Matched files: ${ac.alignment.matched}`);
       lines.push("");
 
       // AI Findings
@@ -132,31 +164,36 @@ export function generateReviewReport(projectPath: string): string {
         lines.push("**AI Findings:**");
         for (const f of r.aiReview.findings) {
           const icon = f.severity === "critical" ? "!!" : f.severity === "warning" ? "!" : "i";
-          lines.push(`- ${icon} ${f.severity} — [${f.area}] ${f.description}`);
+          lines.push(`- ${icon} **${f.severity}** — [${f.area}] ${f.description}`);
         }
-      } else {
-        lines.push("**AI Findings:** _None_");
+        lines.push("");
       }
 
       // Autofix actions (so human can review what AI did)
       if (r.autofix) {
-        lines.push("");
         if (r.autofix.attempted && r.autofix.fixed) {
           lines.push(`**Autofix Applied** (${r.autofix.changes.length} change(s)):`);
           for (const c of r.autofix.changes) {
             lines.push(`- \`${c.file}\` — ${c.description}`);
           }
+          lines.push("");
         } else if (r.autofix.attempted && r.autofix.error) {
           lines.push(`**Autofix Failed:** ${r.autofix.error}`);
+          lines.push("");
         } else if (r.autofix.attempted) {
           lines.push("**Autofix:** Attempted but no changes made");
+          lines.push("");
         }
       }
 
-      lines.push("");
       lines.push("---");
       lines.push("");
     }
+  } else {
+    lines.push("## Needs Attention");
+    lines.push("");
+    lines.push("_All features passed review._");
+    lines.push("");
   }
 
   const content = lines.join("\n") + "\n";

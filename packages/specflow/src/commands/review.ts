@@ -63,7 +63,8 @@ function countFindings(findings: { severity: string }[]): { critical: number; wa
 function assembleReviewResult(
   featureId: string,
   automatedResult: AutomatedReviewResult,
-  aiResult: AIReviewResult | null
+  aiResult: AIReviewResult | null,
+  featureName?: string
 ): ReviewResult {
   const checksPass = automatedResult.passed;
   const aiPass = aiResult ? aiResult.passed : null;
@@ -73,6 +74,7 @@ function assembleReviewResult(
 
   return {
     featureId,
+    featureName,
     reviewedAt: new Date().toISOString(),
     passed,
     automatedChecks: {
@@ -160,7 +162,7 @@ async function reviewSingleFeature(
   }
 
   // Assemble and write review.json
-  let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
+  let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult, feature.name);
   writeReviewJson(projectPath, featureId, reviewResult);
 
   // Autofix attempt — between Layer 2 (AI) and Layer 3 (human)
@@ -199,7 +201,7 @@ async function reviewSingleFeature(
         reAiResult = await runAIReview(featureId, feature.specPath, projectPath);
       }
 
-      reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult);
+      reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult, feature.name);
       reviewResult.autofix = {
         attempted: autofixResult.attempted,
         fixed: autofixResult.fixed,
@@ -422,7 +424,7 @@ async function reviewCommandHandler(
 
     if (options.checksOnly) {
       // Still write review.json for checks-only
-      const result = assembleReviewResult(featureId, automatedResult, null);
+      const result = assembleReviewResult(featureId, automatedResult, null, feature.name);
       writeReviewJson(projectPath, featureId, result);
       return;
     }
@@ -450,7 +452,7 @@ async function reviewCommandHandler(
     }
 
     // Write review.json
-    let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult);
+    let reviewResult = assembleReviewResult(featureId, automatedResult, aiResult, feature.name);
     writeReviewJson(projectPath, featureId, reviewResult);
 
     // Autofix attempt — between Layer 2 and Layer 3
@@ -492,7 +494,7 @@ async function reviewCommandHandler(
             console.log(`  Re-review score: ${reScore}% ${reAiResult.passed ? "(PASS)" : "(FAIL)"}`);
           }
 
-          reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult);
+          reviewResult = assembleReviewResult(featureId, reAutomated, reAiResult, feature.name);
           writeReviewJson(projectPath, featureId, reviewResult);
         } else if (autofixResult.error) {
           console.log(`  x Autofix failed: ${autofixResult.error}`);
