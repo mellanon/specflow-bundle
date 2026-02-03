@@ -106,11 +106,34 @@ Work through tasks in the order specified in tasks.md. For each task:
 
 1. **Read the task** - Understand what needs to be built and where
 2. **Write failing test** - Define expected behavior before writing code
-3. **Confirm failure** - Run test to verify it fails meaningfully
+3. **Confirm failure** - Run \`specflow tdd\` to verify it fails (tracks iteration)
 4. **Write minimal implementation** - Just enough code to pass the test
-5. **Confirm pass** - Run test to verify implementation works
+5. **Confirm pass** - Run \`specflow tdd\` to verify implementation works
 6. **Refactor if needed** - Clean up while keeping tests green
 7. **Mark task complete** - Update progress tracking table
+
+### TDD Tracking (IMPORTANT)
+
+**Always use \`specflow tdd\` instead of \`bun test\` for running tests.**
+
+This command:
+- Tracks each test run with iteration numbers (Run #1, #2, #3...)
+- Shows which tests were fixed or broke since last run
+- Assigns stable IDs to each test (UT-1, UT-2...) for traceability
+- Saves history to \`.specify/tests/history/\` for debugging regressions
+
+\`\`\`bash
+# Run tests with tracking
+specflow tdd
+
+# Check TDD progress
+specflow tdd --status
+
+# See iteration history
+specflow test-track --history
+\`\`\`
+
+The output shows deltas: \`✓ PASS | Run #5 | 45/45 (100%) (+3 pass, 2 fixed)\`
 
 ### Quality Standards
 
@@ -132,16 +155,22 @@ describe('DataModel', () => {
   });
 });
 
-// Step 2: Run → FAIL (function doesn't exist yet)
+// Step 2: Run specflow tdd → FAIL (function doesn't exist yet)
+//   Output: ✗ UT-42 should throw 'name is required'
+//   Run #1 | 44/45 (97.8%) | 1 new failure
+
 // Step 3: Write minimal implementation
 export function createEntity(data: unknown): Entity {
   const parsed = EntitySchema.parse(data);
   return parsed;
 }
 
-// Step 4: Run → PASS
+// Step 4: Run specflow tdd → PASS
+//   Output: ✓ ALL PASS | Run #2 | 45/45 (100%) (+1 pass, UT-42 fixed)
+
 // Step 5: Refactor (add edge cases, improve error messages)
-// Step 6: Mark T-1.1 complete, move to T-1.2
+// Step 6: Run specflow tdd → verify no regressions
+// Step 7: Mark T-1.1 complete, move to T-1.2
 \`\`\`
 
 ## Output Format

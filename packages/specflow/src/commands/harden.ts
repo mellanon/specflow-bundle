@@ -26,6 +26,7 @@ import { generateFixDescriptors } from "../lib/harden/fix-gen";
 import { runRetest } from "../lib/harden/retest";
 import { checkConvergence } from "../lib/harden/convergence";
 import { readEvaluationOptional, readTriageOptional, readConvergenceOptional } from "../lib/harden/artifacts";
+import { runAutorun } from "../lib/harden/autorun";
 import type { HardenSession } from "../types";
 
 export interface HardenCommandOptions {
@@ -38,6 +39,9 @@ export interface HardenCommandOptions {
   fix?: boolean;
   retest?: boolean;
   check?: boolean;
+  autorun?: boolean;
+  maxIterations?: number;
+  verbose?: boolean;
 }
 
 /**
@@ -56,10 +60,11 @@ async function hardenSingleFeature(
     process.exit(1);
   }
 
-  // Phase gate: must be at implement or later
-  if (feature.phase !== "implement" && feature.phase !== "tasks") {
-    console.error(`Error: Feature ${featureId} must have completed IMPLEMENT phase before hardening.`);
-    console.error(`Current phase: ${feature.phase}`);
+  // Phase gate: must have completed TASKS phase (FR-11), so feature must be at implement or later
+  const allowedPhases = ["implement", "harden", "complete"];
+  if (!allowedPhases.includes(feature.phase)) {
+    console.error(`Error: Feature ${featureId} must have completed TASKS phase before hardening.`);
+    console.error(`Current phase: ${feature.phase}. Required: implement or later.`);
     process.exit(1);
   }
 
@@ -270,7 +275,7 @@ async function handleAtomicSubcommand(
 ): Promise<void> {
   // --evaluate --all: batch mode
   if (options.evaluate && options.all) {
-    const features = getFeatures().filter((f) => f.phase === "implement" || f.phase === "tasks");
+    const features = getFeatures().filter((f) => ["implement", "harden", "complete"].includes(f.phase));
     if (features.length === 0) {
       console.log("No features at implement/tasks phase for evaluation.");
       return;
@@ -278,8 +283,14 @@ async function handleAtomicSubcommand(
     let hasFailures = false;
     for (const f of features) {
       if (!f.specPath) continue;
+      // Skip features without protocols
+      const protocolPath = join(projectPath, ".specify", "harden", f.id.toLowerCase(), "protocol.md");
+      if (!existsSync(protocolPath)) {
+        console.log(`\n  Skipping: ${f.id} - ${f.name} (no protocol)`);
+        continue;
+      }
       console.log(`\n  Evaluating: ${f.id} - ${f.name}`);
-      const result = runEvaluation(projectPath, f.id, f.specPath);
+      const result = await runEvaluation(projectPath, f.id, f.specPath);
       if (result.summary.fail > 0) hasFailures = true;
     }
     if (hasFailures) process.exit(1);
@@ -304,7 +315,7 @@ async function handleAtomicSubcommand(
       process.exit(1);
     }
     console.log(`\n  Evaluate: ${featureId} - ${feature.name}\n`);
-    const result = runEvaluation(projectPath, featureId, feature.specPath);
+    const result = await runEvaluation(projectPath, featureId, feature.specPath);
     if (result.summary.fail > 0) process.exit(1);
     return;
   }
@@ -329,7 +340,7 @@ async function handleAtomicSubcommand(
       process.exit(1);
     }
     console.log(`\n  Retest: ${featureId} - ${feature.name}\n`);
-    const result = runRetest(projectPath, featureId, feature.specPath);
+    const result = await runRetest(projectPath, featureId, feature.specPath);
     // Check if all pass or accepted
     const triage = readTriageOptional(projectPath, featureId);
     const acceptedIds = new Set(
@@ -350,6 +361,20 @@ async function handleAtomicSubcommand(
     if (!result.converged) process.exit(1);
     return;
   }
+
+  if (options.autorun) {
+    if (!feature.specPath) {
+      console.error(`Error: Feature ${featureId} has no spec path.`);
+      process.exit(1);
+    }
+    const maxIterations = options.maxIterations ?? 10;
+    const result = await runAutorun(projectPath, featureId, feature.specPath, {
+      maxIterations,
+      verbose: options.verbose,
+    });
+    if (!result.converged) process.exit(1);
+    return;
+  }
 }
 
 /**
@@ -367,15 +392,15 @@ export async function hardenCommand(
   }
 
   // Mutual exclusion check for atomic subcommands
-  const subcommandFlags = [options.evaluate, options.triage, options.fix, options.retest, options.check]
+  const subcommandFlags = [options.evaluate, options.triage, options.fix, options.retest, options.check, options.autorun]
     .filter(Boolean);
   if (subcommandFlags.length > 1) {
-    console.error("Error: Only one subcommand flag (--evaluate, --triage, --fix, --retest, --check) at a time.");
+    console.error("Error: Only one subcommand flag (--evaluate, --triage, --fix, --retest, --check, --autorun) at a time.");
     process.exit(1);
   }
 
-  // Handle atomic subcommands (F-023)
-  if (options.evaluate || options.triage || options.fix || options.retest || options.check) {
+  // Handle atomic subcommands (F-023, F-024)
+  if (options.evaluate || options.triage || options.fix || options.retest || options.check || options.autorun) {
     if (!dbExists(projectPath)) {
       console.error("Error: No SpecFlow database found. Run 'specflow init' first.");
       process.exit(1);
@@ -401,9 +426,9 @@ export async function hardenCommand(
     initDatabase(dbPath);
 
     if (options.all) {
-      const features = getFeatures().filter((f) => f.phase === "implement");
+      const features = getFeatures().filter((f) => ["implement", "harden"].includes(f.phase));
       if (features.length === 0) {
-        console.log("No features at implement phase eligible for hardening.");
+        console.log("No features at implement or harden phase eligible for hardening.");
         return;
       }
       for (const f of features) {

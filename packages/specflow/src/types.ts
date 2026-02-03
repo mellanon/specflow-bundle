@@ -888,9 +888,19 @@ export interface ReviewResult {
     alignment: { matched: number; missing: number };
   };
   aiReview: {
-    passed: boolean;
+    passed: boolean | null;
     score: number;
     findings: { severity: string; area: string; description: string }[];
+    hardenSummary?: {
+      total: number;
+      pass: number;
+      fail: number;
+      skip: number;
+      converged: boolean;
+      bugs: number;
+      specGaps: number;
+      accepted: number;
+    } | null;
   } | null;
   autofix?: {
     attempted: boolean;

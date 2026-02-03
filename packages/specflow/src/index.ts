@@ -44,6 +44,8 @@ import { versionCommand } from "./commands/version";
 import { evolveCommand } from "./commands/evolve";
 import { requestChangesCommand } from "./commands/request-changes";
 import { hardenCommand } from "./commands/harden";
+import { testTrackCommand } from "./commands/test-track";
+import { tddCommand } from "./commands/tdd";
 
 // =============================================================================
 // Main Program
@@ -355,6 +357,9 @@ program
   .option("--fix", "Generate fix descriptors for bugs (outputs fixes.json)")
   .option("--retest", "Re-evaluate only previously-failed cases (updates evaluation.json)")
   .option("--check", "Report convergence status (outputs convergence.json)")
+  .option("--autorun", "Iterative loop: evaluate → triage → fix → retest until convergence")
+  .option("--max-iterations <n>", "Max autorun iterations (default: 10)", "10")
+  .option("--verbose", "Show detailed output during autorun")
   .action((featureId, options) => hardenCommand(featureId, {
     dryRun: options.dryRun,
     all: options.all,
@@ -365,6 +370,41 @@ program
     fix: options.fix,
     retest: options.retest,
     check: options.check,
+    autorun: options.autorun,
+    maxIterations: options.maxIterations ? parseInt(options.maxIterations, 10) : undefined,
+    verbose: options.verbose,
+  }));
+
+program
+  .command("test-track")
+  .description("Track unit test results with traceability across iterations")
+  .option("--status", "Show test progress summary")
+  .option("--history", "Show test run history")
+  .option("--limit <n>", "Limit history entries shown", "10")
+  .option("--run", "Run tests and track results")
+  .option("--json", "Output as JSON")
+  .action((options) => testTrackCommand({
+    status: options.status,
+    history: options.history,
+    limit: options.limit ? parseInt(options.limit, 10) : undefined,
+    run: options.run,
+    json: options.json,
+  }));
+
+program
+  .command("tdd")
+  .description("Run TDD loop with automatic test tracking and iteration history")
+  .option("--status", "Show current TDD progress")
+  .option("--converge", "Loop until all tests pass (interactive)")
+  .option("--max-iterations <n>", "Max iterations in converge mode", "50")
+  .option("--pattern <glob>", "Test file pattern to run")
+  .option("-v, --verbose", "Show detailed test output")
+  .action((options) => tddCommand({
+    status: options.status,
+    converge: options.converge,
+    maxIterations: options.maxIterations ? parseInt(options.maxIterations, 10) : undefined,
+    pattern: options.pattern,
+    verbose: options.verbose,
   }));
 
 program
