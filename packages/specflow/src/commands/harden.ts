@@ -20,7 +20,8 @@ import { parseSpec } from "../lib/harden/spec-parser";
 import { writeProtocol, computeSpecHash } from "../lib/harden/protocol-writer";
 import { writeReport } from "../lib/harden/report-writer";
 import { createSession, findIncompleteSession, runInteractiveSession } from "../lib/harden/harden-session";
-import { generateAcceptanceSpec, writeAcceptanceSpec } from "../lib/harden/acceptance-spec-generator";
+import { generateAcceptanceSpec, generateAcceptanceSpecLegacy, writeAcceptanceSpec } from "../lib/harden/acceptance-spec-generator";
+import { generateWorkflowTests } from "../lib/harden/workflow-test-generator";
 import type { HardenSession } from "../types";
 
 export interface HardenCommandOptions {
@@ -29,6 +30,72 @@ export interface HardenCommandOptions {
   status?: boolean;
   only?: string;      // Comma-separated TC IDs to run
   from?: string;      // Resume from specific TC ID
+}
+
+/**
+ * Execute dry-run harden for a single feature (parallel-safe)
+ * Separated from hardenSingleFeature to avoid interactive prompts
+ */
+async function hardenSingleFeatureDryRun(
+  featureId: string,
+  feature: { id: string; name: string; description?: string | null; specPath?: string | null; phase: string }
+): Promise<void> {
+  const projectPath = process.cwd();
+
+  if (!feature.specPath) {
+    console.log(`  [${featureId}] Skipped: no spec path`);
+    return;
+  }
+
+  // Guard: verify specPath belongs to this feature
+  const ownershipError = validateSpecPathOwnership(featureId, feature.specPath);
+  if (ownershipError) {
+    console.log(`  [${featureId}] Skipped: ${ownershipError}`);
+    return;
+  }
+
+  const specFile = join(feature.specPath, "spec.md");
+  if (!existsSync(specFile)) {
+    console.log(`  [${featureId}] Skipped: spec.md not found`);
+    return;
+  }
+
+  const outputDir = join(projectPath, ".specify", "harden", featureId.toLowerCase());
+
+  console.log(`  [${featureId}] Parsing spec.md...`);
+  const testCases = parseSpec(specFile);
+
+  if (testCases.length === 0) {
+    console.log(`  [${featureId}] No testable criteria found`);
+    return;
+  }
+
+  const specHash = computeSpecHash(specFile);
+  writeProtocol(outputDir, featureId, feature.name, testCases, specHash);
+
+  // Generate workflow-level acceptance tests using AI
+  try {
+    const workflowResult = await generateWorkflowTests(
+      featureId,
+      feature.name,
+      feature.description || "",
+      feature.specPath!
+    );
+    console.log(`  [${featureId}] Generated ${workflowResult.tests.length} workflow tests (from ${testCases.length} spec items)`);
+
+    const acceptanceSpecContent = generateAcceptanceSpec(workflowResult);
+    writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+  } catch (err) {
+    // Fallback to legacy generation if AI fails
+    console.log(`  [${featureId}] AI failed, using legacy mode`);
+    const acceptanceSpecContent = generateAcceptanceSpecLegacy(
+      featureId,
+      feature.name,
+      testCases,
+      specHash
+    );
+    writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+  }
 }
 
 /**
@@ -112,17 +179,35 @@ async function hardenSingleFeature(
   console.log(`  Protocol: ${protocolPath}`);
 
   if (options.dryRun) {
-    // Generate human-readable acceptance test specification
-    const acceptanceSpecContent = generateAcceptanceSpec(
-      featureId,
-      feature.name,
-      testCases,
-      specHash
-    );
-    const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
-    console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
-    console.log("\n  [DRY RUN] Acceptance test specification generated.");
-    console.log("  Open the markdown file and work through each test case.\n");
+    // Generate workflow-level acceptance tests using AI
+    console.log("  Generating workflow-level acceptance tests...");
+    try {
+      const workflowResult = await generateWorkflowTests(
+        featureId,
+        feature.name,
+        feature.description || "",
+        feature.specPath!
+      );
+      console.log(`  Generated ${workflowResult.tests.length} workflow tests (consolidated from ${testCases.length} spec items).`);
+
+      const acceptanceSpecContent = generateAcceptanceSpec(workflowResult);
+      const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+      console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
+      console.log("\n  [DRY RUN] Acceptance test specification generated.");
+      console.log("  Open the markdown file and work through each workflow test.\n");
+    } catch (err) {
+      // Fallback to legacy generation if AI fails
+      console.log(`  AI generation failed, using legacy mode: ${err}`);
+      const acceptanceSpecContent = generateAcceptanceSpecLegacy(
+        featureId,
+        feature.name,
+        testCases,
+        specHash
+      );
+      const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+      console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
+      console.log("\n  [DRY RUN] Acceptance test specification generated (legacy mode).\n");
+    }
     return;
   }
 
@@ -248,8 +333,50 @@ export async function hardenCommand(
         console.log("No features at implement or harden phase eligible for hardening.");
         return;
       }
-      for (const f of features) {
-        await hardenSingleFeature(f.id, options);
+
+      if (options.dryRun) {
+        // Parallel execution for dry-run (no DB state conflicts)
+        console.log(`\n  Processing ${features.length} features in parallel...\n`);
+        const CONCURRENCY = 5;
+        const results: { id: string; success: boolean; error?: string }[] = [];
+
+        // Process in batches of CONCURRENCY
+        for (let i = 0; i < features.length; i += CONCURRENCY) {
+          const batch = features.slice(i, i + CONCURRENCY);
+          const batchResults = await Promise.allSettled(
+            batch.map(async (f) => {
+              try {
+                await hardenSingleFeatureDryRun(f.id, f);
+                return { id: f.id, success: true };
+              } catch (err) {
+                return { id: f.id, success: false, error: String(err) };
+              }
+            })
+          );
+
+          for (const result of batchResults) {
+            if (result.status === "fulfilled") {
+              results.push(result.value);
+            } else {
+              results.push({ id: "unknown", success: false, error: result.reason });
+            }
+          }
+        }
+
+        // Summary
+        const succeeded = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success);
+        console.log(`\n  ══════════════════════════════════════`);
+        console.log(`  Batch Complete: ${succeeded}/${features.length} succeeded`);
+        if (failed.length > 0) {
+          console.log(`  Failed: ${failed.map(f => f.id).join(", ")}`);
+        }
+        console.log(`  ══════════════════════════════════════\n`);
+      } else {
+        // Sequential execution for interactive mode
+        for (const f of features) {
+          await hardenSingleFeature(f.id, options);
+        }
       }
     } else {
       await hardenSingleFeature(featureId, options);

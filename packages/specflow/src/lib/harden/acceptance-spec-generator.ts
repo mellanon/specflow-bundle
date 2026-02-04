@@ -2,49 +2,22 @@
  * Acceptance Test Specification Generator
  *
  * Generates a human-readable markdown document for acceptance testing.
+ * Uses workflow-level tests (3-5 per feature) instead of checkbox-level tests.
+ *
  * The document is designed to be filled in by a human tester who:
- * 1. Reads each test case
- * 2. Executes the steps manually (or with AI assistance)
- * 3. Records pass/fail/skip with notes
+ * 1. Opens the markdown on one screen
+ * 2. Executes tests on the other screen
+ * 3. Records pass/fail/skip with findings as they go
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import type { HardenTestCase } from "../../types";
-
-export interface AcceptanceSpec {
-  featureId: string;
-  featureName: string;
-  version: string;
-  generatedAt: string;
-  specHash: string;
-  testCases: AcceptanceTestCase[];
-}
-
-export interface AcceptanceTestCase {
-  id: string;
-  title: string;
-  requirement: string;
-  priority: "critical" | "high" | "medium" | "low";
-  preconditions: string[];
-  steps: string[];
-  expectedResult: string;
-  // Result fields - filled in by human
-  status?: "pass" | "fail" | "skip" | "pending";
-  testedBy?: string;
-  testedAt?: string;
-  notes?: string;
-}
+import type { WorkflowTest, WorkflowTestResult } from "./workflow-test-generator";
 
 /**
- * Generate acceptance test specification markdown
+ * Generate acceptance test specification markdown from workflow tests
  */
-export function generateAcceptanceSpec(
-  featureId: string,
-  featureName: string,
-  testCases: HardenTestCase[],
-  specHash: string
-): string {
+export function generateAcceptanceSpec(result: WorkflowTestResult): string {
   const now = new Date().toISOString().split("T")[0];
 
   const lines: string[] = [
@@ -52,51 +25,64 @@ export function generateAcceptanceSpec(
     ``,
     `| Field | Value |`,
     `|-------|-------|`,
-    `| **Feature** | ${featureId} - ${featureName} |`,
+    `| **Feature** | ${result.featureId} - ${result.featureName} |`,
     `| **Version** | 1.0 |`,
     `| **Generated** | ${now} |`,
-    `| **Spec Hash** | ${specHash.slice(0, 8)} |`,
+    `| **Spec Hash** | ${result.specHash.slice(0, 8)} |`,
     ``,
     `## Summary`,
     ``,
     `| Total | Pass | Fail | Skip | Pending |`,
     `|-------|------|------|------|---------|`,
-    `| ${testCases.length} | | | | ${testCases.length} |`,
+    `| ${result.tests.length} | | | | ${result.tests.length} |`,
     ``,
     `---`,
     ``,
   ];
 
-  for (const tc of testCases) {
-    lines.push(`## ${tc.id}: ${tc.description}`);
+  for (const test of result.tests) {
+    lines.push(`## ${test.id}: ${test.title}`);
     lines.push(``);
-    lines.push(`**Requirement:** ${tc.source}`);
-    lines.push(`**Type:** ${tc.type}`);
+    lines.push(`**Covers:** ${test.covers.join(", ")}`);
     lines.push(``);
 
-    if (tc.preconditions.length > 0) {
-      lines.push(`### Preconditions`);
-      for (const pre of tc.preconditions) {
-        lines.push(`- ${pre}`);
+    if (test.setup.length > 0) {
+      lines.push(`### Setup`);
+      for (const item of test.setup) {
+        lines.push(`- ${item}`);
       }
       lines.push(``);
     }
 
-    lines.push(`### Test Steps`);
-    for (let i = 0; i < tc.steps.length; i++) {
-      lines.push(`${i + 1}. ${tc.steps[i]}`);
+    lines.push(`### Steps`);
+    for (let i = 0; i < test.steps.length; i++) {
+      lines.push(`${i + 1}. ${test.steps[i]}`);
     }
     lines.push(``);
 
-    lines.push(`### Expected Result`);
-    lines.push(tc.expectedResult);
+    lines.push(`### Verify`);
+    lines.push(`<!-- Each criterion should be binary testable (YES/NO in ~2 seconds) -->`);
+    for (const item of test.verify) {
+      lines.push(`- [ ] ${item}`);
+    }
     lines.push(``);
 
     lines.push(`### Result`);
     lines.push(``);
-    lines.push(`**Status:**`);
+    lines.push(`**Status:** \`pass\` / \`fail\` / \`skip\``);
     lines.push(``);
-    lines.push(`**Findings:**`);
+    lines.push(`**Evidence:** *(How did you verify each criterion?)*`);
+    lines.push(`| Criterion | Pass? | Evidence Type | Evidence |`);
+    lines.push(`|-----------|-------|---------------|----------|`);
+    for (let i = 0; i < Math.min(test.verify.length, 3); i++) {
+      const shortCriterion = test.verify[i].slice(0, 40) + (test.verify[i].length > 40 ? "..." : "");
+      lines.push(`| ${shortCriterion} | | | |`);
+    }
+    if (test.verify.length > 3) {
+      lines.push(`| *(${test.verify.length - 3} more criteria...)* | | | |`);
+    }
+    lines.push(``);
+    lines.push(`**Findings:** *(Observations, issues, notes)*`);
     lines.push(``);
     lines.push(``);
     lines.push(``);
@@ -107,18 +93,57 @@ export function generateAcceptanceSpec(
   // Add footer with instructions
   lines.push(`## Instructions`);
   lines.push(``);
-  lines.push(`For each test case:`);
-  lines.push(`1. Read the steps and expected result`);
-  lines.push(`2. Execute the test (manually or with AI assistance)`);
-  lines.push(`3. Record **Status** as: \`pass\`, \`fail\`, or \`skip\``);
-  lines.push(`4. Write your **Findings** - what you observed, any issues`);
+  lines.push(`For each test:`);
+  lines.push(`1. Complete the **Setup** steps`);
+  lines.push(`2. Execute the **Steps** in order`);
+  lines.push(`3. Check each **Verify** criterion (should be YES/NO in ~2 seconds)`);
+  lines.push(`4. Record **Evidence** for each criterion using these types:`);
+  lines.push(``);
+  lines.push(`| Evidence Type | Example |`);
+  lines.push(`|---------------|---------|`);
+  lines.push(`| \`test_output\` | "bun test: 12 passed, 0 failed" |`);
+  lines.push(`| \`file_content\` | "Line 47 reads: \`if (!token) return 401\`" |`);
+  lines.push(`| \`tool_result\` | "curl returns 200 with \`{status: ok}\`" |`);
+  lines.push(`| \`screenshot\` | "Login form renders with email/password fields" |`);
+  lines.push(`| \`manual_check\` | "Grep for 'API_KEY' returns 0 matches" |`);
+  lines.push(``);
+  lines.push(`5. Set **Status**: \`pass\` (all criteria met), \`fail\` (any criterion failed), \`skip\` (not tested)`);
+  lines.push(`6. Write **Findings** - observations, issues, suggestions`);
   lines.push(``);
   lines.push(`Update the Summary table when complete.`);
   lines.push(``);
   lines.push(`---`);
-  lines.push(`*Generated by SpecFlow*`);
+  lines.push(`*Generated by SpecFlow — Evidence types from [The Algorithm](https://github.com/danielmiessler/TheAlgorithm)*`);
 
   return lines.join("\n");
+}
+
+/**
+ * Generate acceptance spec from legacy HardenTestCase format (backwards compat)
+ * @deprecated Use generateAcceptanceSpec with WorkflowTestResult instead
+ */
+export function generateAcceptanceSpecLegacy(
+  featureId: string,
+  featureName: string,
+  testCases: { id: string; description: string; source: string; type: string; preconditions: string[]; steps: string[]; expectedResult: string }[],
+  specHash: string
+): string {
+  // Convert legacy format to workflow format for consistent output
+  const workflowTests: WorkflowTest[] = testCases.map((tc) => ({
+    id: tc.id,
+    title: tc.description,
+    covers: [tc.source],
+    setup: tc.preconditions,
+    steps: tc.steps,
+    verify: [tc.expectedResult],
+  }));
+
+  return generateAcceptanceSpec({
+    tests: workflowTests,
+    featureId,
+    featureName,
+    specHash,
+  });
 }
 
 /**
