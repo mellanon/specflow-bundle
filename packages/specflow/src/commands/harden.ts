@@ -19,29 +19,16 @@ import {
 import { parseSpec } from "../lib/harden/spec-parser";
 import { writeProtocol, computeSpecHash } from "../lib/harden/protocol-writer";
 import { writeReport } from "../lib/harden/report-writer";
-import { createSession, findIncompleteSession, runInteractiveSession, runHeadlessSession } from "../lib/harden/harden-session";
-import { runEvaluation } from "../lib/harden/evaluate";
-import { runTriage } from "../lib/harden/triage";
-import { generateFixDescriptors } from "../lib/harden/fix-gen";
-import { runRetest } from "../lib/harden/retest";
-import { checkConvergence } from "../lib/harden/convergence";
-import { readEvaluationOptional, readTriageOptional, readConvergenceOptional } from "../lib/harden/artifacts";
-import { runAutorun } from "../lib/harden/autorun";
+import { createSession, findIncompleteSession, runInteractiveSession } from "../lib/harden/harden-session";
+import { generateAcceptanceSpec, writeAcceptanceSpec } from "../lib/harden/acceptance-spec-generator";
 import type { HardenSession } from "../types";
 
 export interface HardenCommandOptions {
   dryRun?: boolean;
   all?: boolean;
-  headless?: boolean;
   status?: boolean;
-  evaluate?: boolean;
-  triage?: boolean;
-  fix?: boolean;
-  retest?: boolean;
-  check?: boolean;
-  autorun?: boolean;
-  maxIterations?: number;
-  verbose?: boolean;
+  only?: string;      // Comma-separated TC IDs to run
+  from?: string;      // Resume from specific TC ID
 }
 
 /**
@@ -96,14 +83,10 @@ async function hardenSingleFeature(
     console.log(`  Found incomplete session (${existing.resumeFrom}/${existing.testCases.length} tests remaining).`);
     console.log(`  Resuming from ${existing.testCases[existing.resumeFrom]?.id || "end"}...\n`);
 
-    const session = options.headless
-      ? await runHeadlessSession(
-          db, existing.session, existing.testCases, existing.resumeFrom,
-          outputDir, feature.name, projectPath, feature.specPath!
-        )
-      : await runInteractiveSession(
-          db, existing.session, existing.testCases, existing.resumeFrom, outputDir, feature.name
-        );
+    const session = await runInteractiveSession(
+      db, existing.session, existing.testCases, existing.resumeFrom, outputDir, feature.name,
+      { only: options.only?.split(","), from: options.from }
+    );
 
     if (session.result !== "incomplete") {
       const reportPath = writeReport(outputDir, featureId, feature.name, session, existing.testCases, projectPath);
@@ -129,26 +112,25 @@ async function hardenSingleFeature(
   console.log(`  Protocol: ${protocolPath}`);
 
   if (options.dryRun) {
-    console.log("\n  [DRY RUN] Protocol generated. No interactive session started.\n");
-    return;
-  }
-
-  if (options.headless) {
-    const session = createSession(db, featureId, testCases, protocolPath);
-    const finalSession = await runHeadlessSession(
-      db, session, testCases, 0, outputDir, feature.name,
-      projectPath, feature.specPath!
+    // Generate human-readable acceptance test specification
+    const acceptanceSpecContent = generateAcceptanceSpec(
+      featureId,
+      feature.name,
+      testCases,
+      specHash
     );
-    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases, projectPath);
-    console.log(`  Report: ${reportPath}`);
-    handleResult(featureId, finalSession);
+    const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+    console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
+    console.log("\n  [DRY RUN] Acceptance test specification generated.");
+    console.log("  Open the markdown file and work through each test case.\n");
     return;
   }
 
   // Create session and run interactive loop
   const session = createSession(db, featureId, testCases, protocolPath);
   const finalSession = await runInteractiveSession(
-    db, session, testCases, 0, outputDir, feature.name
+    db, session, testCases, 0, outputDir, feature.name,
+    { only: options.only?.split(","), from: options.from }
   );
 
   if (finalSession.result !== "incomplete") {
@@ -234,147 +216,6 @@ function showHardenStatus(projectPath: string): void {
     `  ${"TOTAL".padEnd(10)} ${String(totalAll).padStart(5)} ${String(totalPass).padStart(5)} ${String(totalFail).padStart(5)} ${String(totalSkip).padStart(5)} ${String(totalPending).padStart(5)}`
   );
   console.log("");
-
-  // F-023: Show JSON artifact status if available
-  let hasArtifacts = false;
-  for (const dir of dirs) {
-    const fid = dir.toUpperCase();
-    const evaluation = readEvaluationOptional(projectPath, fid);
-    const triageData = readTriageOptional(projectPath, fid);
-    const convergence = readConvergenceOptional(projectPath, fid);
-
-    if (evaluation || triageData || convergence) {
-      if (!hasArtifacts) {
-        console.log("  Artifact Status:");
-        console.log(`  ${"─".repeat(56)}`);
-        hasArtifacts = true;
-      }
-      const parts: string[] = [`  ${fid.padEnd(10)}`];
-      if (evaluation) {
-        parts.push(`eval: ${evaluation.summary.pass}/${evaluation.summary.total} pass`);
-      }
-      if (triageData) {
-        parts.push(`triage: ${triageData.summary.bugs}b/${triageData.summary.specGaps}sg/${triageData.summary.accepted}a`);
-      }
-      if (convergence) {
-        parts.push(convergence.converged ? "CONVERGED" : "NOT CONVERGED");
-      }
-      console.log(parts.join("  "));
-    }
-  }
-  if (hasArtifacts) console.log("");
-}
-
-/**
- * Handle atomic subcommands (F-023)
- */
-async function handleAtomicSubcommand(
-  projectPath: string,
-  featureId: string,
-  options: HardenCommandOptions
-): Promise<void> {
-  // --evaluate --all: batch mode
-  if (options.evaluate && options.all) {
-    const features = getFeatures().filter((f) => ["implement", "harden", "complete"].includes(f.phase));
-    if (features.length === 0) {
-      console.log("No features at implement/tasks phase for evaluation.");
-      return;
-    }
-    let hasFailures = false;
-    for (const f of features) {
-      if (!f.specPath) continue;
-      // Skip features without protocols
-      const protocolPath = join(projectPath, ".specify", "harden", f.id.toLowerCase(), "protocol.md");
-      if (!existsSync(protocolPath)) {
-        console.log(`\n  Skipping: ${f.id} - ${f.name} (no protocol)`);
-        continue;
-      }
-      console.log(`\n  Evaluating: ${f.id} - ${f.name}`);
-      const result = await runEvaluation(projectPath, f.id, f.specPath);
-      if (result.summary.fail > 0) hasFailures = true;
-    }
-    if (hasFailures) process.exit(1);
-    return;
-  }
-
-  // All other subcommands require a feature ID
-  if (!featureId) {
-    console.error("Error: Feature ID required for this subcommand.");
-    process.exit(1);
-  }
-
-  const feature = getFeature(featureId);
-  if (!feature) {
-    console.error(`Error: Feature ${featureId} not found.`);
-    process.exit(1);
-  }
-
-  if (options.evaluate) {
-    if (!feature.specPath) {
-      console.error(`Error: Feature ${featureId} has no spec path.`);
-      process.exit(1);
-    }
-    console.log(`\n  Evaluate: ${featureId} - ${feature.name}\n`);
-    const result = await runEvaluation(projectPath, featureId, feature.specPath);
-    if (result.summary.fail > 0) process.exit(1);
-    return;
-  }
-
-  if (options.triage) {
-    console.log(`\n  Triage: ${featureId} - ${feature.name}\n`);
-    const result = runTriage(projectPath, featureId);
-    if (result.summary.bugs > 0) process.exit(1);
-    return;
-  }
-
-  if (options.fix) {
-    console.log(`\n  Fix: ${featureId} - ${feature.name}\n`);
-    generateFixDescriptors(projectPath, featureId);
-    // Always exit 0
-    return;
-  }
-
-  if (options.retest) {
-    if (!feature.specPath) {
-      console.error(`Error: Feature ${featureId} has no spec path.`);
-      process.exit(1);
-    }
-    console.log(`\n  Retest: ${featureId} - ${feature.name}\n`);
-    const result = await runRetest(projectPath, featureId, feature.specPath);
-    // Check if all pass or accepted
-    const triage = readTriageOptional(projectPath, featureId);
-    const acceptedIds = new Set(
-      (triage?.decisions || [])
-        .filter((d) => d.category === "accept")
-        .map((d) => d.testCaseId)
-    );
-    const hasFailures = result.testCases.some(
-      (tc) => tc.status !== "pass" && !acceptedIds.has(tc.id)
-    );
-    if (hasFailures) process.exit(1);
-    return;
-  }
-
-  if (options.check) {
-    console.log(`\n  Check: ${featureId} - ${feature.name}\n`);
-    const result = checkConvergence(projectPath, featureId);
-    if (!result.converged) process.exit(1);
-    return;
-  }
-
-  if (options.autorun) {
-    if (!feature.specPath) {
-      console.error(`Error: Feature ${featureId} has no spec path.`);
-      process.exit(1);
-    }
-    const maxIterations = options.maxIterations ?? 10;
-    const result = await runAutorun(projectPath, featureId, feature.specPath, {
-      maxIterations,
-      verbose: options.verbose,
-    });
-    if (!result.converged) process.exit(1);
-    return;
-  }
 }
 
 /**
@@ -388,30 +229,6 @@ export async function hardenCommand(
 
   if (options.status) {
     showHardenStatus(projectPath);
-    return;
-  }
-
-  // Mutual exclusion check for atomic subcommands
-  const subcommandFlags = [options.evaluate, options.triage, options.fix, options.retest, options.check, options.autorun]
-    .filter(Boolean);
-  if (subcommandFlags.length > 1) {
-    console.error("Error: Only one subcommand flag (--evaluate, --triage, --fix, --retest, --check, --autorun) at a time.");
-    process.exit(1);
-  }
-
-  // Handle atomic subcommands (F-023, F-024)
-  if (options.evaluate || options.triage || options.fix || options.retest || options.check || options.autorun) {
-    if (!dbExists(projectPath)) {
-      console.error("Error: No SpecFlow database found. Run 'specflow init' first.");
-      process.exit(1);
-    }
-    const dbPath = getDbPath(projectPath);
-    try {
-      initDatabase(dbPath);
-      await handleAtomicSubcommand(projectPath, featureId, options);
-    } finally {
-      closeDatabase();
-    }
     return;
   }
 

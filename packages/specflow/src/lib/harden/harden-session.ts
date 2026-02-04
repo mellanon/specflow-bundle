@@ -4,10 +4,15 @@
  */
 
 import { createInterface } from "readline";
+import { spawnSync } from "child_process";
 import type { Database } from "bun:sqlite";
 import type { HardenTestCase, HardenSession } from "../../types";
 import { writeProtocol } from "./protocol-writer";
-import { evaluateTestCase } from "./headless-evaluator";
+
+export interface InteractiveSessionOptions {
+  only?: string[];  // Only run these TC IDs
+  from?: string;    // Resume from this TC ID
+}
 
 /**
  * Create a new harden session in the database
@@ -119,7 +124,8 @@ export async function runInteractiveSession(
   testCases: HardenTestCase[],
   startFrom: number,
   outputDir: string,
-  featureName: string
+  featureName: string,
+  options: InteractiveSessionOptions = {}
 ): Promise<HardenSession> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -130,24 +136,61 @@ export async function runInteractiveSession(
   let failed = session.failed;
   let skipped = session.skipped;
 
-  console.log(`\n  Harden session started. ${testCases.length - startFrom} tests remaining.\n`);
-  console.log("  Commands: pass(p), fail(f), skip(s), retry(r), add, status, quit(q)\n");
+  // Build set of selected test IDs
+  const selectedIds = options.only ? new Set(options.only.map(id => id.toUpperCase())) : null;
+  const fromId = options.from?.toUpperCase();
 
+  console.log(`\n  ${"═".repeat(50)}`);
+  console.log(`  HARDEN SESSION: ${featureName}`);
+  console.log(`  ${"═".repeat(50)}`);
+  console.log(`  ${testCases.length} test cases total`);
+  if (selectedIds) {
+    console.log(`  Running: ${[...selectedIds].join(", ")}`);
+  }
+  console.log(`\n  Commands:`);
+  console.log(`    [P]ass   - Test passed (optional note)`);
+  console.log(`    [F]ail   - Test failed (note required)`);
+  console.log(`    [S]kip   - Skip this test (optional note)`);
+  console.log(`    [R]un    - Execute automated steps`);
+  console.log(`    [Q]uit   - Save and exit\n`);
+
+  // Find start index
   let i = startFrom;
+  if (fromId) {
+    const fromIndex = testCases.findIndex(tc => tc.id.toUpperCase() === fromId);
+    if (fromIndex >= 0) i = fromIndex;
+  }
+
   while (i < testCases.length) {
     const tc = testCases[i];
+
+    // Skip if not in selected list
+    if (selectedIds && !selectedIds.has(tc.id.toUpperCase())) {
+      if (tc.status === "pending") {
+        tc.status = "skipped";
+        tc.notes = "Not selected";
+        tc.executedAt = new Date().toISOString();
+        skipped++;
+        updateTestCase(db, session.id, tc);
+        console.log(`  \x1b[90m${tc.id}: skipped (not selected)\x1b[0m`);
+      }
+      i++;
+      continue;
+    }
+
     if (tc.status !== "pending") {
       i++;
       continue;
     }
 
-    console.log(`\n  ${"=".repeat(50)}`);
-    console.log(`  ${tc.id}: ${tc.description}`);
-    console.log(`  ${"=".repeat(50)}`);
+    console.log(`\n  ${"─".repeat(50)}`);
+    console.log(`  \x1b[1m${tc.id}: ${tc.description}\x1b[0m`);
+    console.log(`  ${"─".repeat(50)}`);
     console.log(`  Source: ${tc.source}`);
-    console.log(`  Type: ${tc.type}`);
+    console.log(`  Type: \x1b[36m${tc.type}\x1b[0m`);
     if (tc.preconditions.length > 0) {
-      console.log(`  Preconditions: ${tc.preconditions.join("; ")}`);
+      console.log(`  Preconditions:`);
+      tc.preconditions.forEach(p => console.log(`    • ${p}`));
     }
     console.log(`  Steps:`);
     for (let s = 0; s < tc.steps.length; s++) {
@@ -156,32 +199,54 @@ export async function runInteractiveSession(
     console.log(`  Expected: ${tc.expectedResult}`);
     console.log("");
 
-    const answer = await prompt("  Verdict [pass/fail/skip/retry/add/status/quit]: ");
+    // Show appropriate prompt based on test type
+    const isAutomated = tc.type === "automated";
+    const promptText = isAutomated
+      ? "  [P]ass | [F]ail | [S]kip | [R]un | [Q]uit: "
+      : "  [P]ass | [F]ail | [S]kip | [Q]uit: ";
+
+    const answer = await prompt(promptText);
     const cmd = answer.trim().toLowerCase();
 
     if (cmd === "pass" || cmd === "p") {
+      const notes = await prompt("  Note (optional, Enter to skip): ");
       tc.status = "pass";
+      tc.notes = notes.trim() || null;
       tc.executedAt = new Date().toISOString();
       passed++;
       updateTestCase(db, session.id, tc);
-      console.log(`  >> ${tc.id}: PASS`);
+      console.log(`  >> \x1b[32m${tc.id}: PASS\x1b[0m${tc.notes ? ` - ${tc.notes}` : ""}`);
       i++;
     } else if (cmd === "fail" || cmd === "f") {
-      const notes = await prompt("  Notes (failure detail): ");
+      let notes = "";
+      while (!notes.trim()) {
+        notes = await prompt("  Why did it fail? (required): ");
+      }
       tc.status = "fail";
-      tc.notes = notes.trim() || null;
+      tc.notes = notes.trim();
       tc.executedAt = new Date().toISOString();
       failed++;
       updateTestCase(db, session.id, tc);
-      console.log(`  >> ${tc.id}: FAIL`);
+      console.log(`  >> \x1b[31m${tc.id}: FAIL\x1b[0m - ${tc.notes}`);
       i++;
     } else if (cmd === "skip" || cmd === "s") {
+      const notes = await prompt("  Reason (optional, Enter to skip): ");
       tc.status = "skipped";
+      tc.notes = notes.trim() || null;
       tc.executedAt = new Date().toISOString();
       skipped++;
       updateTestCase(db, session.id, tc);
-      console.log(`  >> ${tc.id}: SKIPPED`);
+      console.log(`  >> \x1b[33m${tc.id}: SKIPPED\x1b[0m${tc.notes ? ` - ${tc.notes}` : ""}`);
       i++;
+    } else if ((cmd === "run" || cmd === "r") && isAutomated) {
+      // Execute automated test steps
+      console.log(`\n  \x1b[36mExecuting automated steps...\x1b[0m`);
+      const result = executeAutomatedSteps(tc.steps, process.cwd());
+      console.log(result.output);
+      console.log(result.success ? "  \x1b[32m✓ Commands succeeded\x1b[0m" : "  \x1b[31m✗ Commands failed\x1b[0m");
+      console.log(`\n  Now mark the result: [P]ass | [F]ail | [S]kip`);
+      // Don't advance - let user mark the result
+      continue;
     } else if (cmd === "retry" || cmd === "r") {
       // Just re-display the same test
       continue;
@@ -242,69 +307,6 @@ export async function runInteractiveSession(
   };
 }
 
-/**
- * Run headless (autonomous) session using claude -p for evaluation
- */
-export async function runHeadlessSession(
-  db: Database,
-  session: HardenSession,
-  testCases: HardenTestCase[],
-  startFrom: number,
-  outputDir: string,
-  featureName: string,
-  projectPath: string,
-  specPath: string
-): Promise<HardenSession> {
-  let passed = session.passed;
-  let failed = session.failed;
-  let skipped = session.skipped;
-
-  console.log(`\n  Headless session: ${testCases.length - startFrom} tests to evaluate.\n`);
-
-  for (let i = startFrom; i < testCases.length; i++) {
-    const tc = testCases[i];
-    if (tc.status !== "pending") continue;
-
-    process.stdout.write(`  ${tc.id}: ${tc.description.slice(0, 60)}... `);
-
-    const verdict = evaluateTestCase(projectPath, session.featureId, specPath, tc);
-
-    tc.status = verdict.status === "pass" ? "pass" : verdict.status === "fail" ? "fail" : "skipped";
-    tc.notes = [verdict.evidence, verdict.notes].filter(Boolean).join(" | ");
-    tc.executedAt = new Date().toISOString();
-
-    if (verdict.status === "pass") passed++;
-    else if (verdict.status === "fail") failed++;
-    else skipped++;
-
-    updateTestCase(db, session.id, tc);
-    console.log(verdict.status === "pass" ? "PASS" : verdict.status === "fail" ? "FAIL" : "SKIP");
-
-    // Update protocol file
-    writeProtocol(outputDir, session.featureId, featureName, testCases, "");
-  }
-
-  const result = failed > 0 ? "fail" : "pass";
-  const now = new Date().toISOString();
-
-  db.run(
-    `UPDATE harden_sessions SET result = ?, passed = ?, failed = ?, skipped = ?, total_tests = ?, completed_at = ? WHERE id = ?`,
-    [result, passed, failed, skipped, testCases.length, now, session.id]
-  );
-
-  console.log(`\n  Results: ${passed} passed, ${failed} failed, ${skipped} skipped\n`);
-
-  return {
-    ...session,
-    result: result as any,
-    passed,
-    failed,
-    skipped,
-    totalTests: testCases.length,
-    completedAt: now,
-  };
-}
-
 function updateTestCase(db: Database, sessionId: number, tc: HardenTestCase): void {
   db.run(
     `UPDATE harden_test_cases SET status = ?, notes = ?, executed_at = ? WHERE session_id = ? AND test_id = ?`,
@@ -318,4 +320,61 @@ function insertTestCase(db: Database, sessionId: number, tc: HardenTestCase): vo
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [sessionId, tc.id, tc.description, tc.source, tc.type, JSON.stringify(tc.preconditions), JSON.stringify(tc.steps), tc.expectedResult, tc.status]
   );
+}
+
+/**
+ * Execute automated test steps and return results
+ */
+function executeAutomatedSteps(
+  steps: string[],
+  projectPath: string
+): { success: boolean; output: string } {
+  const outputs: string[] = [];
+
+  for (const step of steps) {
+    const command = extractCommand(step);
+    if (!command) {
+      outputs.push(`  Step: ${step} (no command)`);
+      continue;
+    }
+
+    outputs.push(`  $ ${command}`);
+    const result = spawnSync("sh", ["-c", command], {
+      cwd: projectPath,
+      encoding: "utf-8",
+      timeout: 30000,
+    });
+
+    const output = ((result.stdout || "") + (result.stderr || "")).trim();
+    if (output) {
+      outputs.push(`    ${output.split("\n").join("\n    ")}`);
+    }
+
+    if (result.status !== 0) {
+      outputs.push(`    \x1b[31mExit code: ${result.status}\x1b[0m`);
+      return { success: false, output: outputs.join("\n") };
+    }
+  }
+
+  return { success: true, output: outputs.join("\n") };
+}
+
+/**
+ * Extract command from step text
+ * Matches: `command`, "run: command", "the operator runs `command`"
+ */
+function extractCommand(step: string): string | null {
+  // Match `command` in backticks
+  const backtickMatch = step.match(/`([^`]+)`/);
+  if (backtickMatch) return backtickMatch[1];
+
+  // Match "Run: command" or "Execute: command"
+  const runMatch = step.match(/(?:run|execute|invoke):\s*(.+)/i);
+  if (runMatch) return runMatch[1].trim();
+
+  // Match "runs/executes `command`"
+  const verbMatch = step.match(/(?:runs?|executes?)\s+`([^`]+)`/i);
+  if (verbMatch) return verbMatch[1];
+
+  return null;
 }

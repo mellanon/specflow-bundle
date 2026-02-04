@@ -348,31 +348,17 @@ program
   .command("harden")
   .description("Run guided acceptance testing protocol against spec criteria")
   .argument("[feature-id]", "Feature ID to harden (e.g., F-1)")
-  .option("--dry-run", "Generate protocol without interactive session")
+  .option("--dry-run", "Generate acceptance test specification without interactive session")
   .option("--all", "Harden all features at implement phase")
-  .option("--headless", "Autonomous AI-powered evaluation (no interactive prompts)")
   .option("--status", "Show hardening progress across all features")
-  .option("--evaluate", "Run evaluation against test protocol (outputs evaluation.json)")
-  .option("--triage", "Classify failures into bug/spec-gap/accept (outputs triage.json)")
-  .option("--fix", "Generate fix descriptors for bugs (outputs fixes.json)")
-  .option("--retest", "Re-evaluate only previously-failed cases (updates evaluation.json)")
-  .option("--check", "Report convergence status (outputs convergence.json)")
-  .option("--autorun", "Iterative loop: evaluate → triage → fix → retest until convergence")
-  .option("--max-iterations <n>", "Max autorun iterations (default: 10)", "10")
-  .option("--verbose", "Show detailed output during autorun")
+  .option("--only <ids>", "Only run specific test cases (comma-separated: TC-1,TC-3,TC-5)")
+  .option("--from <id>", "Resume from specific test case (e.g., TC-5)")
   .action((featureId, options) => hardenCommand(featureId, {
     dryRun: options.dryRun,
     all: options.all,
-    headless: options.headless,
     status: options.status,
-    evaluate: options.evaluate,
-    triage: options.triage,
-    fix: options.fix,
-    retest: options.retest,
-    check: options.check,
-    autorun: options.autorun,
-    maxIterations: options.maxIterations ? parseInt(options.maxIterations, 10) : undefined,
-    verbose: options.verbose,
+    only: options.only,
+    from: options.from,
   }));
 
 program
