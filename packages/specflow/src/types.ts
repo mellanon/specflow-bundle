@@ -887,162 +887,48 @@ export interface ReviewResult {
     checks: { name: string; passed: boolean; duration: number }[];
     alignment: { matched: number; missing: number };
   };
-  aiReview: {
-    passed: boolean | null;
-    score: number;
-    findings: { severity: string; area: string; description: string }[];
-    hardenSummary?: {
-      total: number;
-      pass: number;
-      fail: number;
-      skip: number;
-      converged: boolean;
-      bugs: number;
-      specGaps: number;
-      accepted: number;
-    } | null;
-  } | null;
-  autofix?: {
-    attempted: boolean;
-    fixed: boolean;
-    changes: { file: string; description: string }[];
-    error?: string;
-  } | null;
-  summary: {
-    checksPass: boolean;
-    aiPass: boolean | null;
-    score: number | null;
-    findingsCount: { critical: number; warning: number; info: number };
-  };
-}
-
-// =============================================================================
-// Harden (F-019)
-// =============================================================================
-
-/** Test execution type */
-export type TestType = "automated" | "manual" | "hybrid";
-
-/** Test case status */
-export type TestStatus = "pending" | "pass" | "fail" | "skipped";
-
-/** Harden session result */
-export type HardenResult = "pass" | "fail" | "incomplete";
-
-/** Individual test case in a harden protocol */
-export interface HardenTestCase {
-  id: string;
-  description: string;
-  source: string;
-  type: TestType;
-  preconditions: string[];
-  steps: string[];
-  expectedResult: string;
-  status: TestStatus;
-  notes: string | null;
-  executedAt: string | null;
-}
-
-/** Full harden protocol */
-export interface HardenProtocol {
-  featureId: string;
-  featureName: string;
-  generatedAt: string;
-  specHash: string;
-  testCases: HardenTestCase[];
-}
-
-/** Harden session record */
-export interface HardenSession {
-  id: number;
-  featureId: string;
-  startedAt: string;
-  completedAt: string | null;
-  result: HardenResult;
-  totalTests: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-}
-
-// =============================================================================
-// Harden Autorun — F-023: Iterative Evaluate-Fix-Retest Loop
-// =============================================================================
-
-/** Triage classification category */
-export type TriageCategory = "bug" | "spec-gap" | "accept";
-
-/** Result of evaluating all test cases against implementation */
-export interface EvaluationResult {
-  featureId: string;
-  evaluatedAt: string;
-  protocolHash: string;
-  testCases: EvaluationTestCase[];
-  summary: {
+  acceptanceTests: {
+    available: boolean;
     total: number;
     pass: number;
     fail: number;
     skip: number;
-  };
-}
-
-/** A single evaluated test case */
-export interface EvaluationTestCase {
-  id: string;
-  status: "pass" | "fail" | "skip";
-  evidence: string;
-  notes: string | null;
-}
-
-/** Result of triaging evaluation failures */
-export interface TriageResult {
-  featureId: string;
-  triagedAt: string;
-  decisions: TriageDecision[];
+    pending: number;
+  } | null;
   summary: {
-    bugs: number;
-    specGaps: number;
-    accepted: number;
+    checksPass: boolean;
+    acceptanceTestsPass: boolean | null;
   };
 }
 
-/** A single triage decision for a failed test case */
-export interface TriageDecision {
-  testCaseId: string;
-  category: TriageCategory;
-  reasoning: string;
-  suggestedFix: string | null;
-  suggestedAmendment: string | null;
-  justification: string | null;
-}
+// =============================================================================
+// Inbox (F-025)
+// =============================================================================
 
-/** Collection of fix descriptors for bug-classified failures */
-export interface FixDescriptors {
+/** A single item in the review inbox queue */
+export interface InboxItem {
   featureId: string;
-  generatedAt: string;
-  descriptors: FixDescriptor[];
+  name: string;
+  priority: "P0" | "P1" | "P2";
+  verdict: "ALL PASS" | string;
+  verdictDetail: string[];
+  timeInQueue: string;
+  timeInQueueMs: number;
+  reviewPath: string;
+  acceptanceTestPath: string | null;
+  decision: string;
 }
 
-/** A single fix descriptor */
-export interface FixDescriptor {
-  testCaseId: string;
-  filePath: string;
-  description: string;
-  suggestedChange: string;
-  codeContext: string | null;
+/** Result of building the inbox queue */
+export interface InboxResult {
+  queue: InboxItem[];
+  summary: { total: number; p0: number; p1: number; p2: number };
+  suggestedBatchApprove: string | null;
 }
 
-/** Result of convergence check */
-export interface ConvergenceResult {
-  featureId: string;
-  checkedAt: string;
-  converged: boolean;
-  summary: {
-    total: number;
-    pass: number;
-    accepted: number;
-    bugs: number;
-    specGaps: number;
-    remainingFailures: number;
-  };
-}
+// =============================================================================
+// Harden (F-019) — Types removed in lifecycle alignment Phase 2
+// Old TC-based types (HardenTestCase, HardenProtocol, HardenSession) and
+// F-023 autorun types (EvaluationResult, TriageResult, etc.) deleted.
+// Harden now uses template+ingest workflow — see acceptance-spec-ingest.ts.
+// =============================================================================
