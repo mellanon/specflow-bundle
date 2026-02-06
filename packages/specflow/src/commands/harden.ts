@@ -1,6 +1,8 @@
 /**
  * Harden Command
- * Guided acceptance testing protocol
+ * Generate acceptance test templates and ingest filled results.
+ *
+ * Revised: Interactive session removed. Human fills acceptance-test.md directly.
  */
 
 import { join } from "path";
@@ -13,32 +15,42 @@ import {
   updateFeaturePhase,
   getDbPath,
   dbExists,
-  getDbInstance,
   validateSpecPathOwnership,
 } from "../lib/database";
-import { parseSpec } from "../lib/harden/spec-parser";
-import { writeProtocol, computeSpecHash } from "../lib/harden/protocol-writer";
-import { writeReport } from "../lib/harden/report-writer";
-import { createSession, findIncompleteSession, runInteractiveSession } from "../lib/harden/harden-session";
-import { generateAcceptanceSpec, generateAcceptanceSpecLegacy, writeAcceptanceSpec } from "../lib/harden/acceptance-spec-generator";
+import {
+  generateAcceptanceSpec,
+  generateAcceptanceSpecLegacy,
+  writeAcceptanceSpec,
+} from "../lib/harden/acceptance-spec-generator";
 import { generateWorkflowTests } from "../lib/harden/workflow-test-generator";
-import type { HardenSession } from "../types";
+import {
+  ingestAcceptanceTests,
+  readHardenResults,
+  getHardenHistory,
+  getHardenProgressSummary,
+} from "../lib/harden/acceptance-spec-ingest";
 
 export interface HardenCommandOptions {
   dryRun?: boolean;
   all?: boolean;
   status?: boolean;
-  only?: string;      // Comma-separated TC IDs to run
-  from?: string;      // Resume from specific TC ID
+  ingest?: boolean;
+  history?: boolean;
 }
 
-/**
- * Execute dry-run harden for a single feature (parallel-safe)
- * Separated from hardenSingleFeature to avoid interactive prompts
- */
-async function hardenSingleFeatureDryRun(
+// =============================================================================
+// Generate acceptance test template for a single feature
+// =============================================================================
+
+async function generateForFeature(
   featureId: string,
-  feature: { id: string; name: string; description?: string | null; specPath?: string | null; phase: string }
+  feature: {
+    id: string;
+    name: string;
+    description?: string | null;
+    specPath?: string | null;
+    phase: string;
+  }
 ): Promise<void> {
   const projectPath = process.cwd();
 
@@ -47,7 +59,6 @@ async function hardenSingleFeatureDryRun(
     return;
   }
 
-  // Guard: verify specPath belongs to this feature
   const ownershipError = validateSpecPathOwnership(featureId, feature.specPath);
   if (ownershipError) {
     console.log(`  [${featureId}] Skipped: ${ownershipError}`);
@@ -60,20 +71,8 @@ async function hardenSingleFeatureDryRun(
     return;
   }
 
-  const outputDir = join(projectPath, ".specify", "harden", featureId.toLowerCase());
-
-  console.log(`  [${featureId}] Parsing spec.md...`);
-  const testCases = parseSpec(specFile);
-
-  if (testCases.length === 0) {
-    console.log(`  [${featureId}] No testable criteria found`);
-    return;
-  }
-
-  const specHash = computeSpecHash(specFile);
-  writeProtocol(outputDir, featureId, feature.name, testCases, specHash);
-
   // Generate workflow-level acceptance tests using AI
+  console.log(`  [${featureId}] Generating acceptance tests...`);
   try {
     const workflowResult = await generateWorkflowTests(
       featureId,
@@ -81,171 +80,159 @@ async function hardenSingleFeatureDryRun(
       feature.description || "",
       feature.specPath!
     );
-    console.log(`  [${featureId}] Generated ${workflowResult.tests.length} workflow tests (from ${testCases.length} spec items)`);
+    console.log(
+      `  [${featureId}] Generated ${workflowResult.tests.length} workflow tests`
+    );
 
     const acceptanceSpecContent = generateAcceptanceSpec(workflowResult);
-    writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+    const path = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+    console.log(`  [${featureId}] Acceptance Spec: ${path}`);
   } catch (err) {
     // Fallback to legacy generation if AI fails
-    console.log(`  [${featureId}] AI failed, using legacy mode`);
+    console.log(`  [${featureId}] AI failed, using spec-based fallback`);
+
+    // Read spec content and generate a basic template
+    const specContent = readFileSync(specFile, "utf-8");
+    const workflowTests = extractBasicTests(featureId, feature.name, specContent);
     const acceptanceSpecContent = generateAcceptanceSpecLegacy(
       featureId,
       feature.name,
-      testCases,
-      specHash
+      workflowTests,
+      simpleHash(specContent),
+      feature.description || ""
     );
-    writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+    const path = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
+    console.log(`  [${featureId}] Acceptance Spec (fallback): ${path}`);
   }
 }
 
 /**
- * Execute the harden command for a single feature
+ * Extract basic test cases from spec content when AI is unavailable
  */
-async function hardenSingleFeature(
+function extractBasicTests(
   featureId: string,
-  options: HardenCommandOptions
-): Promise<void> {
-  const projectPath = process.cwd();
-  const db = getDbInstance();
-  const feature = getFeature(featureId);
+  featureName: string,
+  specContent: string
+): Array<{
+  id: string;
+  description: string;
+  source: string;
+  type: string;
+  preconditions: string[];
+  steps: string[];
+  expectedResult: string;
+}> {
+  const tests: Array<{
+    id: string;
+    description: string;
+    source: string;
+    type: string;
+    preconditions: string[];
+    steps: string[];
+    expectedResult: string;
+  }> = [];
 
+  // Extract scenarios from spec
+  const scenarioMatches = specContent.matchAll(
+    /### Scenario (\d+):\s*(.+)/g
+  );
+  let idx = 1;
+  for (const match of scenarioMatches) {
+    tests.push({
+      id: `AT-${idx}`,
+      description: `Verify: ${match[2].trim()}`,
+      source: `Scenario ${match[1]}`,
+      type: "manual",
+      preconditions: [],
+      steps: [`Execute Scenario ${match[1]} as described in spec`],
+      expectedResult: `Scenario ${match[1]} passes acceptance criteria`,
+    });
+    idx++;
+  }
+
+  // If no scenarios found, create a single generic test
+  if (tests.length === 0) {
+    tests.push({
+      id: "AT-1",
+      description: `Verify ${featureName} works as specified`,
+      source: "spec.md",
+      type: "manual",
+      preconditions: [],
+      steps: ["Execute the feature as described in spec.md"],
+      expectedResult: "Feature works as specified",
+    });
+  }
+
+  return tests;
+}
+
+/**
+ * Simple string hash for spec content
+ */
+function simpleHash(content: string): string {
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    const char = content.charCodeAt(i);
+    hash = ((hash << 5) - hash + char) | 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
+}
+
+// =============================================================================
+// Ingest filled acceptance-test.md
+// =============================================================================
+
+function ingestForFeature(featureId: string): void {
+  const projectPath = process.cwd();
+
+  const feature = getFeature(featureId);
   if (!feature) {
     console.error(`Error: Feature ${featureId} not found.`);
     process.exit(1);
   }
 
-  // Phase gate: must have completed TASKS phase (FR-11), so feature must be at implement or later
-  const allowedPhases = ["implement", "harden", "complete"];
-  if (!allowedPhases.includes(feature.phase)) {
-    console.error(`Error: Feature ${featureId} must have completed TASKS phase before hardening.`);
-    console.error(`Current phase: ${feature.phase}. Required: implement or later.`);
-    process.exit(1);
+  console.log(`\n  Ingesting results for ${featureId}: ${feature.name}\n`);
+
+  const results = ingestAcceptanceTests(projectPath, featureId);
+  const s = results.summary;
+
+  console.log(`  Iteration #${results.iteration}`);
+  console.log(`  Results: ${s.pass} pass, ${s.fail} fail, ${s.skip} skip, ${s.pending} pending (${s.total} total)`);
+
+  // Show delta from previous ingest
+  if (results.delta) {
+    const d = results.delta;
+    const parts: string[] = [];
+    if (d.passChange !== 0) parts.push(`pass ${d.passChange > 0 ? "+" : ""}${d.passChange}`);
+    if (d.failChange !== 0) parts.push(`fail ${d.failChange > 0 ? "+" : ""}${d.failChange}`);
+    if (parts.length > 0) console.log(`  Delta: ${parts.join(", ")}`);
+    if (d.fixedTests.length > 0) console.log(`  Fixed: ${d.fixedTests.join(", ")}`);
+    if (d.brokenTests.length > 0) console.log(`  Broken: ${d.brokenTests.join(", ")}`);
   }
 
-  if (!feature.specPath) {
-    console.error(`Error: Feature ${featureId} has no spec path.`);
-    process.exit(1);
-  }
-
-  // Guard: verify specPath belongs to this feature (catches cross-wired DB entries)
-  const ownershipError = validateSpecPathOwnership(featureId, feature.specPath);
-  if (ownershipError) {
-    console.error(`Error: ${ownershipError}`);
-    process.exit(1);
-  }
-
-  const specFile = join(feature.specPath, "spec.md");
-  if (!existsSync(specFile)) {
-    console.error(`Error: spec.md not found at ${specFile}`);
-    process.exit(1);
-  }
-
-  const outputDir = join(projectPath, ".specify", "harden", featureId.toLowerCase());
-
-  console.log(`\n  Harden: ${featureId} - ${feature.name}\n`);
-
-  // Check for existing incomplete session
-  const existing = findIncompleteSession(db, featureId);
-  if (existing && !options.dryRun) {
-    console.log(`  Found incomplete session (${existing.resumeFrom}/${existing.testCases.length} tests remaining).`);
-    console.log(`  Resuming from ${existing.testCases[existing.resumeFrom]?.id || "end"}...\n`);
-
-    const session = await runInteractiveSession(
-      db, existing.session, existing.testCases, existing.resumeFrom, outputDir, feature.name,
-      { only: options.only?.split(","), from: options.from }
-    );
-
-    if (session.result !== "incomplete") {
-      const reportPath = writeReport(outputDir, featureId, feature.name, session, existing.testCases, projectPath);
-      console.log(`\n  Report: ${reportPath}`);
-      handleResult(featureId, session);
-    }
-    return;
-  }
-
-  // Parse spec and generate protocol
-  console.log("  Parsing spec.md for test criteria...");
-  const testCases = parseSpec(specFile);
-
-  if (testCases.length === 0) {
-    console.log("  No testable criteria found in spec.md.");
-    return;
-  }
-
-  console.log(`  Found ${testCases.length} test cases.`);
-
-  const specHash = computeSpecHash(specFile);
-  const protocolPath = writeProtocol(outputDir, featureId, feature.name, testCases, specHash);
-  console.log(`  Protocol: ${protocolPath}`);
-
-  if (options.dryRun) {
-    // Generate workflow-level acceptance tests using AI
-    console.log("  Generating workflow-level acceptance tests...");
-    try {
-      const workflowResult = await generateWorkflowTests(
-        featureId,
-        feature.name,
-        feature.description || "",
-        feature.specPath!
-      );
-      console.log(`  Generated ${workflowResult.tests.length} workflow tests (consolidated from ${testCases.length} spec items).`);
-
-      const acceptanceSpecContent = generateAcceptanceSpec(workflowResult);
-      const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
-      console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
-      console.log("\n  [DRY RUN] Acceptance test specification generated.");
-      console.log("  Open the markdown file and work through each workflow test.\n");
-    } catch (err) {
-      // Fallback to legacy generation if AI fails
-      console.log(`  AI generation failed, using legacy mode: ${err}`);
-      const acceptanceSpecContent = generateAcceptanceSpecLegacy(
-        featureId,
-        feature.name,
-        testCases,
-        specHash
-      );
-      const acceptanceSpecPath = writeAcceptanceSpec(projectPath, featureId, acceptanceSpecContent);
-      console.log(`  Acceptance Spec: ${acceptanceSpecPath}`);
-      console.log("\n  [DRY RUN] Acceptance test specification generated (legacy mode).\n");
-    }
-    return;
-  }
-
-  // Create session and run interactive loop
-  const session = createSession(db, featureId, testCases, protocolPath);
-  const finalSession = await runInteractiveSession(
-    db, session, testCases, 0, outputDir, feature.name,
-    { only: options.only?.split(","), from: options.from }
-  );
-
-  if (finalSession.result !== "incomplete") {
-    const reportPath = writeReport(outputDir, featureId, feature.name, finalSession, testCases, projectPath);
-    console.log(`\n  Report: ${reportPath}`);
-    handleResult(featureId, finalSession);
-  }
-}
-
-/**
- * Handle harden result: advance or return phase
- */
-function handleResult(featureId: string, session: HardenSession): void {
-  if (session.result === "pass") {
-    console.log(`\n  ALL TESTS PASSED. Feature ${featureId} eligible for completion.`);
-    console.log(`  Next: Run 'specflow complete ${featureId}'\n`);
-  } else if (session.result === "fail") {
+  // Phase transition based on results
+  if (s.pending > 0) {
+    console.log(`\n  ${s.pending} test(s) still pending. Fill in all results before ingesting.`);
+  } else if (s.fail > 0) {
     updateFeaturePhase(featureId, "implement");
-    console.log(`\n  ${session.failed} TEST(S) FAILED. Feature ${featureId} returned to implement phase.`);
-    console.log(`  Review the harden report and address failures.\n`);
+    console.log(`\n  ${s.fail} test(s) FAILED. Feature returned to implement phase.`);
+    console.log(`  Review failures, fix, and re-test.\n`);
+  } else if (s.pass > 0) {
+    console.log(`\n  ALL TESTS PASSED. Feature ${featureId} eligible for completion.`);
+    console.log(`  Next: Run 'specflow review ${featureId}'\n`);
   }
 }
 
-/**
- * Display hardening status across all features with protocols
- */
+// =============================================================================
+// Status display
+// =============================================================================
+
 function showHardenStatus(projectPath: string): void {
   const hardenDir = join(projectPath, ".specify", "harden");
   if (!existsSync(hardenDir)) {
-    console.log("  No harden protocols found. Run 'specflow harden --dry-run --all' to generate.");
+    console.log(
+      "  No harden data found. Run 'specflow harden --all' to generate acceptance tests."
+    );
     return;
   }
 
@@ -255,29 +242,68 @@ function showHardenStatus(projectPath: string): void {
     .sort();
 
   if (dirs.length === 0) {
-    console.log("  No harden protocols found.");
+    console.log("  No harden data found.");
     return;
   }
 
-  let totalPass = 0, totalFail = 0, totalSkip = 0, totalPending = 0;
-  const rows: { id: string; total: number; pass: number; fail: number; skip: number; pending: number }[] = [];
+  let totalPass = 0,
+    totalFail = 0,
+    totalSkip = 0,
+    totalPending = 0;
+  const rows: {
+    id: string;
+    total: number;
+    pass: number;
+    fail: number;
+    skip: number;
+    pending: number;
+    source: string;
+  }[] = [];
 
   for (const dir of dirs) {
-    const protocolPath = join(hardenDir, dir, "protocol.md");
-    if (!existsSync(protocolPath)) continue;
+    // Try results.json first (ingested results)
+    const results = readHardenResults(projectPath, dir);
+    if (results) {
+      const s = results.summary;
+      rows.push({
+        id: dir.toUpperCase(),
+        total: s.total,
+        pass: s.pass,
+        fail: s.fail,
+        skip: s.skip,
+        pending: s.pending,
+        source: "results",
+      });
+      totalPass += s.pass;
+      totalFail += s.fail;
+      totalSkip += s.skip;
+      totalPending += s.pending;
+      continue;
+    }
 
-    const content = readFileSync(protocolPath, "utf-8");
-    const pass = (content.match(/\*\*Status:\*\* pass/g) || []).length;
-    const fail = (content.match(/\*\*Status:\*\* fail/g) || []).length;
-    const skip = (content.match(/\*\*Status:\*\* skipped/g) || []).length;
-    const pending = (content.match(/\*\*Status:\*\* pending/g) || []).length;
-    const total = pass + fail + skip + pending;
+    // Fall back to counting from acceptance-test.md
+    const atPath = join(hardenDir, dir, "acceptance-test.md");
+    if (!existsSync(atPath)) continue;
 
-    rows.push({ id: dir.toUpperCase(), total, pass, fail, skip, pending });
-    totalPass += pass;
-    totalFail += fail;
-    totalSkip += skip;
-    totalPending += pending;
+    const content = readFileSync(atPath, "utf-8");
+    const atCount = (content.match(/^## AT-\d+:/gm) || []).length;
+    if (atCount > 0) {
+      rows.push({
+        id: dir.toUpperCase(),
+        total: atCount,
+        pass: 0,
+        fail: 0,
+        skip: 0,
+        pending: atCount,
+        source: "template",
+      });
+      totalPending += atCount;
+    }
+  }
+
+  if (rows.length === 0) {
+    console.log("  No acceptance tests found.");
+    return;
   }
 
   const totalAll = totalPass + totalFail + totalSkip + totalPending;
@@ -285,27 +311,94 @@ function showHardenStatus(projectPath: string): void {
   const pct = totalAll > 0 ? Math.round((evaluated * 100) / totalAll) : 0;
 
   console.log(`\n  Harden Status: ${pct}% evaluated (${evaluated}/${totalAll})\n`);
-  console.log(`  ${"Feature".padEnd(10)} ${"Tests".padStart(5)} ${"Pass".padStart(5)} ${"Fail".padStart(5)} ${"Skip".padStart(5)} ${"Pend".padStart(5)}  Status`);
+  console.log(
+    `  ${"Feature".padEnd(10)} ${"ATs".padStart(4)} ${"Pass".padStart(5)} ${"Fail".padStart(5)} ${"Skip".padStart(5)} ${"Pend".padStart(5)}  Status`
+  );
   console.log(`  ${"─".repeat(56)}`);
 
   for (const r of rows) {
-    const status = r.pending > 0 ? "..." : r.fail > 0 ? "FAIL" : "PASS";
-    const marker = r.pending > 0 ? "⏳" : r.fail > 0 ? "❌" : "✅";
+    const status =
+      r.pending === r.total
+        ? "PENDING"
+        : r.pending > 0
+          ? "..."
+          : r.fail > 0
+            ? "FAIL"
+            : "PASS";
+    const marker =
+      r.pending === r.total
+        ? "⏳"
+        : r.pending > 0
+          ? "⏳"
+          : r.fail > 0
+            ? "❌"
+            : "✅";
     console.log(
-      `  ${r.id.padEnd(10)} ${String(r.total).padStart(5)} ${String(r.pass).padStart(5)} ${String(r.fail).padStart(5)} ${String(r.skip).padStart(5)} ${String(r.pending).padStart(5)}  ${marker} ${status}`
+      `  ${r.id.padEnd(10)} ${String(r.total).padStart(4)} ${String(r.pass).padStart(5)} ${String(r.fail).padStart(5)} ${String(r.skip).padStart(5)} ${String(r.pending).padStart(5)}  ${marker} ${status}`
     );
   }
 
   console.log(`  ${"─".repeat(56)}`);
   console.log(
-    `  ${"TOTAL".padEnd(10)} ${String(totalAll).padStart(5)} ${String(totalPass).padStart(5)} ${String(totalFail).padStart(5)} ${String(totalSkip).padStart(5)} ${String(totalPending).padStart(5)}`
+    `  ${"TOTAL".padEnd(10)} ${String(totalAll).padStart(4)} ${String(totalPass).padStart(5)} ${String(totalFail).padStart(5)} ${String(totalSkip).padStart(5)} ${String(totalPending).padStart(5)}`
   );
   console.log("");
 }
 
-/**
- * Main harden command
- */
+// =============================================================================
+// History display
+// =============================================================================
+
+function showHardenHistory(projectPath: string, featureId: string): void {
+  const progress = getHardenProgressSummary(projectPath, featureId);
+  if (!progress) {
+    console.log(`\n  No ingest history for ${featureId}.\n`);
+    return;
+  }
+
+  console.log(`\n  Harden History: ${featureId.toUpperCase()}`);
+  console.log(`  Ingests: ${progress.totalIngests}  |  Trend: ${progress.trend}`);
+
+  // Sparkline of pass rates
+  const sparkChars = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+  const spark = progress.passRateHistory.map((rate) => {
+    const idx = Math.min(Math.round((rate / 100) * 8), 8);
+    return sparkChars[idx];
+  }).join("");
+  console.log(`  Pass rate: ${spark}  (${Math.round(progress.passRateHistory[progress.passRateHistory.length - 1] ?? 0)}%)`);
+
+  // Per-run timeline
+  const history = getHardenHistory(projectPath, featureId);
+  console.log(`\n  ${"Run".padEnd(5)} ${"Date".padEnd(20)} ${"Pass".padStart(5)} ${"Fail".padStart(5)} ${"Skip".padStart(5)} ${"Pend".padStart(5)}  Delta`);
+  console.log(`  ${"─".repeat(62)}`);
+
+  for (const run of history) {
+    const date = new Date(run.ingestedAt).toLocaleString("en-NZ", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const s = run.summary;
+    let deltaStr = "";
+    if (run.delta) {
+      const parts: string[] = [];
+      if (run.delta.fixedTests.length > 0) parts.push(`+${run.delta.fixedTests.length} fixed`);
+      if (run.delta.brokenTests.length > 0) parts.push(`-${run.delta.brokenTests.length} broken`);
+      deltaStr = parts.join(", ");
+    }
+    console.log(
+      `  ${String(`#${run.iteration}`).padEnd(5)} ${date.padEnd(20)} ${String(s.pass).padStart(5)} ${String(s.fail).padStart(5)} ${String(s.skip).padStart(5)} ${String(s.pending).padStart(5)}  ${deltaStr}`
+    );
+  }
+  console.log("");
+}
+
+// =============================================================================
+// Main command
+// =============================================================================
+
 export async function hardenCommand(
   featureId: string,
   options: HardenCommandOptions = {}
@@ -317,8 +410,19 @@ export async function hardenCommand(
     return;
   }
 
+  if (options.history) {
+    if (!featureId) {
+      console.error("Error: Feature ID required for --history. Usage: specflow harden F-1 --history");
+      process.exit(1);
+    }
+    showHardenHistory(projectPath, featureId);
+    return;
+  }
+
   if (!dbExists(projectPath)) {
-    console.error("Error: No SpecFlow database found. Run 'specflow init' first.");
+    console.error(
+      "Error: No SpecFlow database found. Run 'specflow init' first."
+    );
     process.exit(1);
   }
 
@@ -327,59 +431,110 @@ export async function hardenCommand(
   try {
     initDatabase(dbPath);
 
-    if (options.all) {
-      const features = getFeatures().filter((f) => ["implement", "harden"].includes(f.phase));
-      if (features.length === 0) {
-        console.log("No features at implement or harden phase eligible for hardening.");
-        return;
-      }
-
-      if (options.dryRun) {
-        // Parallel execution for dry-run (no DB state conflicts)
-        console.log(`\n  Processing ${features.length} features in parallel...\n`);
-        const CONCURRENCY = 5;
-        const results: { id: string; success: boolean; error?: string }[] = [];
-
-        // Process in batches of CONCURRENCY
-        for (let i = 0; i < features.length; i += CONCURRENCY) {
-          const batch = features.slice(i, i + CONCURRENCY);
-          const batchResults = await Promise.allSettled(
-            batch.map(async (f) => {
+    // --ingest: parse filled acceptance-test.md
+    if (options.ingest) {
+      if (options.all) {
+        const hardenDir = join(projectPath, ".specify", "harden");
+        if (existsSync(hardenDir)) {
+          const dirs = readdirSync(hardenDir, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name)
+            .sort();
+          for (const dir of dirs) {
+            const resultsPath = join(hardenDir, dir, "acceptance-test.md");
+            if (existsSync(resultsPath)) {
               try {
-                await hardenSingleFeatureDryRun(f.id, f);
-                return { id: f.id, success: true };
+                ingestForFeature(dir.toUpperCase());
               } catch (err) {
-                return { id: f.id, success: false, error: String(err) };
+                console.log(`  [${dir.toUpperCase()}] Ingest failed: ${err}`);
               }
-            })
-          );
-
-          for (const result of batchResults) {
-            if (result.status === "fulfilled") {
-              results.push(result.value);
-            } else {
-              results.push({ id: "unknown", success: false, error: result.reason });
             }
           }
         }
-
-        // Summary
-        const succeeded = results.filter(r => r.success).length;
-        const failed = results.filter(r => !r.success);
-        console.log(`\n  ══════════════════════════════════════`);
-        console.log(`  Batch Complete: ${succeeded}/${features.length} succeeded`);
-        if (failed.length > 0) {
-          console.log(`  Failed: ${failed.map(f => f.id).join(", ")}`);
-        }
-        console.log(`  ══════════════════════════════════════\n`);
       } else {
-        // Sequential execution for interactive mode
-        for (const f of features) {
-          await hardenSingleFeature(f.id, options);
+        ingestForFeature(featureId);
+      }
+      return;
+    }
+
+    // Generate acceptance tests
+    if (options.all) {
+      const features = getFeatures().filter((f) =>
+        ["implement", "harden"].includes(f.phase)
+      );
+      if (features.length === 0) {
+        console.log(
+          "No features at implement or harden phase eligible for hardening."
+        );
+        return;
+      }
+
+      console.log(
+        `\n  Generating acceptance tests for ${features.length} features...\n`
+      );
+      const CONCURRENCY = 5;
+      const results: { id: string; success: boolean; error?: string }[] = [];
+
+      for (let i = 0; i < features.length; i += CONCURRENCY) {
+        const batch = features.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (f) => {
+            try {
+              await generateForFeature(f.id, f);
+              return { id: f.id, success: true };
+            } catch (err) {
+              return { id: f.id, success: false, error: String(err) };
+            }
+          })
+        );
+
+        for (const result of batchResults) {
+          if (result.status === "fulfilled") {
+            results.push(result.value);
+          } else {
+            results.push({
+              id: "unknown",
+              success: false,
+              error: result.reason,
+            });
+          }
         }
       }
+
+      const succeeded = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success);
+      console.log(`\n  ══════════════════════════════════════`);
+      console.log(
+        `  Batch Complete: ${succeeded}/${features.length} succeeded`
+      );
+      if (failed.length > 0) {
+        console.log(`  Failed: ${failed.map((f) => f.id).join(", ")}`);
+      }
+      console.log(`  ══════════════════════════════════════\n`);
     } else {
-      await hardenSingleFeature(featureId, options);
+      // Single feature
+      const feature = getFeature(featureId);
+      if (!feature) {
+        console.error(`Error: Feature ${featureId} not found.`);
+        process.exit(1);
+      }
+
+      const allowedPhases = ["implement", "harden", "complete"];
+      if (!allowedPhases.includes(feature.phase)) {
+        console.error(
+          `Error: Feature ${featureId} must have completed TASKS phase before hardening.`
+        );
+        console.error(
+          `Current phase: ${feature.phase}. Required: implement or later.`
+        );
+        process.exit(1);
+      }
+
+      console.log(`\n  Harden: ${featureId} - ${feature.name}\n`);
+      await generateForFeature(featureId, feature);
+      console.log(
+        `\n  Acceptance test template generated. Fill it in and run 'specflow harden ${featureId} --ingest' when done.\n`
+      );
     }
   } finally {
     closeDatabase();

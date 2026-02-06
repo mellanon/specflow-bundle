@@ -1,10 +1,10 @@
 /**
- * Review Artifact I/O — F-024
+ * Review Artifact I/O
  * Atomic read/write utilities for review.json in .specify/review/{featureId}/
  */
 
 import { existsSync, mkdirSync, renameSync, readFileSync, writeFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import type { ReviewResult } from "../../types";
 
 /**
@@ -65,8 +65,7 @@ export function readAllReviewJsons(projectPath: string): ReviewResult[] {
 
 /**
  * Generate a consolidated markdown review report from all review.json artifacts.
- * Exception-based: passes are collapsed, failures are expanded with findings.
- * Returns the absolute path of the written report.
+ * Exception-based: passes are collapsed, failures are expanded.
  */
 export function generateReviewReport(projectPath: string): string {
   const results = readAllReviewJsons(projectPath);
@@ -74,16 +73,21 @@ export function generateReviewReport(projectPath: string): string {
 
   const passed = sorted.filter((r) => r.passed);
   const failed = sorted.filter((r) => !r.passed);
-  const totalScore = sorted.reduce((sum, r) => sum + (r.summary.score ?? 0), 0);
-  const avgScore = sorted.length > 0 ? (totalScore / sorted.length) * 100 : 0;
-  const totalCritical = sorted.reduce((sum, r) => sum + r.summary.findingsCount.critical, 0);
 
-  const totalWarnings = sorted.reduce((sum, r) => sum + r.summary.findingsCount.warning, 0);
-  const totalInfo = sorted.reduce((sum, r) => sum + r.summary.findingsCount.info, 0);
-  const checksWithScores = sorted.filter((r) => r.summary.score !== null && r.summary.score > 0);
-  const realAvgScore = checksWithScores.length > 0
-    ? (checksWithScores.reduce((sum, r) => sum + (r.summary.score ?? 0), 0) / checksWithScores.length) * 100
-    : null;
+  // Aggregate AT counts
+  let totalATs = 0, totalATPass = 0, totalATFail = 0, totalATSkip = 0, totalATPending = 0;
+  let hardenedCount = 0;
+  for (const r of sorted) {
+    const at = r.acceptanceTests;
+    if (at && at.available) {
+      hardenedCount++;
+      totalATs += at.total;
+      totalATPass += at.pass;
+      totalATFail += at.fail;
+      totalATSkip += at.skip;
+      totalATPending += at.pending;
+    }
+  }
 
   const lines: string[] = [];
 
@@ -100,10 +104,8 @@ export function generateReviewReport(projectPath: string): string {
   lines.push(`| Features Reviewed | ${sorted.length} |`);
   lines.push(`| Passed | **${passed.length}** |`);
   lines.push(`| Failed | **${failed.length}** |`);
-  lines.push(`| AI Alignment Score | ${realAvgScore !== null ? `${realAvgScore.toFixed(0)}%` : "_not run_"} |`);
-  lines.push(`| Critical Findings | ${totalCritical} |`);
-  lines.push(`| Warnings | ${totalWarnings} |`);
-  lines.push(`| Info | ${totalInfo} |`);
+  lines.push(`| Features Hardened | ${hardenedCount}/${sorted.length} |`);
+  lines.push(`| Acceptance Tests | ${totalATs} (${totalATPass} pass, ${totalATFail} fail, ${totalATSkip} skip, ${totalATPending} pending) |`);
   lines.push("");
 
   // Automated checks summary (project-wide)
@@ -117,23 +119,20 @@ export function generateReviewReport(projectPath: string): string {
     lines.push("");
   }
 
-  // Results table — all features at a glance
+  // Results table
   lines.push("## Feature Results");
   lines.push("");
-  lines.push(`| Feature | Name | Result | Score | Files | Findings |`);
-  lines.push(`|---------|------|--------|-------|-------|----------|`);
+  lines.push(`| Feature | Name | Result | ATs | Alignment |`);
+  lines.push(`|---------|------|--------|-----|-----------|`);
   for (const r of sorted) {
     const name = r.featureName || "";
     const result = r.passed ? "PASS" : "**FAIL**";
-    const scoreStr = r.summary.score !== null && r.summary.score > 0
-      ? `${(r.summary.score * 100).toFixed(0)}%`
-      : "-";
-    const files = `${r.automatedChecks.alignment.matched}/${r.automatedChecks.alignment.matched + r.automatedChecks.alignment.missing}`;
-    const fc = r.summary.findingsCount;
-    const findingsStr = fc.critical + fc.warning + fc.info > 0
-      ? `${fc.critical}c ${fc.warning}w ${fc.info}i`
-      : "-";
-    lines.push(`| ${r.featureId} | ${name.substring(0, 40)} | ${result} | ${scoreStr} | ${files} | ${findingsStr} |`);
+    const at = r.acceptanceTests;
+    const atsStr = at && at.available ? `${at.pass}/${at.total}` : "-";
+    const alignStr = r.automatedChecks.alignment.missing > 0
+      ? `${r.automatedChecks.alignment.missing} missing`
+      : "ok";
+    lines.push(`| ${r.featureId} | ${name.substring(0, 40)} | ${result} | ${atsStr} | ${alignStr} |`);
   }
   lines.push("");
 
@@ -144,10 +143,7 @@ export function generateReviewReport(projectPath: string): string {
 
     for (const r of failed) {
       const name = r.featureName || r.featureId;
-      const scoreStr = r.summary.score !== null && r.summary.score > 0
-        ? `${(r.summary.score * 100).toFixed(0)}%`
-        : "no score";
-      lines.push(`### ${r.featureId} — ${name} (${scoreStr})`);
+      lines.push(`### ${r.featureId} — ${name}`);
       lines.push("");
 
       // Automated checks
@@ -156,36 +152,17 @@ export function generateReviewReport(projectPath: string): string {
       if (ac.alignment.missing > 0) {
         lines.push(`- Missing files: ${ac.alignment.missing}`);
       }
-      lines.push(`- Matched files: ${ac.alignment.matched}`);
       lines.push("");
 
-      // AI Findings
-      if (r.aiReview && r.aiReview.findings.length > 0) {
-        lines.push("**AI Findings:**");
-        for (const f of r.aiReview.findings) {
-          const icon = f.severity === "critical" ? "!!" : f.severity === "warning" ? "!" : "i";
-          lines.push(`- ${icon} **${f.severity}** — [${f.area}] ${f.description}`);
-        }
+      // Acceptance test summary
+      const at = r.acceptanceTests;
+      if (at && at.available) {
+        lines.push(`**Acceptance Tests:** ${at.pass}/${at.total} pass, ${at.fail} fail`);
         lines.push("");
       }
 
-      // Autofix actions (so human can review what AI did)
-      if (r.autofix) {
-        if (r.autofix.attempted && r.autofix.fixed) {
-          lines.push(`**Autofix Applied** (${r.autofix.changes.length} change(s)):`);
-          for (const c of r.autofix.changes) {
-            lines.push(`- \`${c.file}\` — ${c.description}`);
-          }
-          lines.push("");
-        } else if (r.autofix.attempted && r.autofix.error) {
-          lines.push(`**Autofix Failed:** ${r.autofix.error}`);
-          lines.push("");
-        } else if (r.autofix.attempted) {
-          lines.push("**Autofix:** Attempted but no changes made");
-          lines.push("");
-        }
-      }
-
+      lines.push(`**Action:** \`specflow approve ${r.featureId}\` or \`specflow reject ${r.featureId} --reason "..."\``);
+      lines.push("");
       lines.push("---");
       lines.push("");
     }
@@ -198,7 +175,7 @@ export function generateReviewReport(projectPath: string): string {
 
   const content = lines.join("\n") + "\n";
 
-  // Atomic write: temp + rename
+  // Atomic write
   const outDir = join(projectPath, ".specify");
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, "REVIEW_REPORT.md");

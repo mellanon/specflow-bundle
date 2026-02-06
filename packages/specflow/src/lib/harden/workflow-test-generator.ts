@@ -24,6 +24,7 @@ export interface WorkflowTestResult {
   tests: WorkflowTest[];
   featureId: string;
   featureName: string;
+  featureDescription: string;
   specHash: string;
 }
 
@@ -77,6 +78,7 @@ export async function generateWorkflowTests(
     tests,
     featureId,
     featureName,
+    featureDescription: featureDescription || overview,
     specHash,
   };
 }

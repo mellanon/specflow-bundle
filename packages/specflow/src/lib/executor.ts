@@ -1,10 +1,12 @@
 /**
  * Executor Module
  * Executes Claude subprocess for feature implementation
+ * Includes automatic test tracking for TDD iterations
  */
 
 import { spawn, spawnSync } from "child_process";
 import type { RunResult, FeatureContext } from "../types";
+import { writeTestRun, type TestRunResult } from "./test-tracker/artifacts";
 
 // =============================================================================
 // Completion Detection
@@ -17,6 +19,82 @@ export interface CompletionResult {
   blockReason: string | null;
   testsCount: number | null;
   files: string[];
+}
+
+/**
+ * Extract and save test results from Claude's output
+ * Looks for patterns like "Tests: 200 passing" or "✓ 150 pass, ✗ 3 fail"
+ */
+export function extractAndSaveTestResults(
+  output: string,
+  projectPath: string,
+  featureId: string
+): { saved: boolean; pass: number; fail: number } {
+  // Try multiple patterns Claude might use
+  const patterns = [
+    /(\d+)\s*(?:tests?\s+)?pass(?:ing)?(?:,?\s*(\d+)\s*fail)?/i,
+    /Tests?:\s*(\d+)(?:\s*pass(?:ing)?)?(?:,?\s*(\d+)\s*fail)?/i,
+    /✓\s*(\d+)\s*pass.*?(?:✗\s*(\d+)\s*fail)?/i,
+    /(\d+)\/(\d+)\s*(?:tests?\s+)?pass/i, // "150/200 tests pass" format
+  ];
+
+  let pass = 0;
+  let fail = 0;
+  let matched = false;
+
+  for (const pattern of patterns) {
+    const match = output.match(pattern);
+    if (match) {
+      if (pattern.source.includes("/")) {
+        // "150/200" format - first is pass, second is total
+        pass = parseInt(match[1], 10);
+        fail = parseInt(match[2], 10) - pass;
+      } else {
+        pass = parseInt(match[1], 10) || 0;
+        fail = parseInt(match[2], 10) || 0;
+      }
+      matched = true;
+      break;
+    }
+  }
+
+  if (!matched || pass === 0) {
+    return { saved: false, pass: 0, fail: 0 };
+  }
+
+  // Get git info
+  let gitSha: string | undefined;
+  let branch: string | undefined;
+  try {
+    const shaResult = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8", cwd: projectPath });
+    const branchResult = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf-8", cwd: projectPath });
+    gitSha = shaResult.stdout?.trim();
+    branch = branchResult.stdout?.trim();
+  } catch {
+    // Ignore git errors
+  }
+
+  // Create test run result
+  const testRun: TestRunResult = {
+    runAt: new Date().toISOString(),
+    duration: 0, // Unknown from output
+    tests: [], // Individual tests not available from summary
+    summary: {
+      total: pass + fail,
+      pass,
+      fail,
+      skip: 0,
+    },
+    gitSha,
+    branch,
+  };
+
+  try {
+    writeTestRun(projectPath, testRun);
+    return { saved: true, pass, fail };
+  } catch {
+    return { saved: false, pass, fail };
+  }
 }
 
 /**
@@ -147,6 +225,12 @@ export async function executeFeature(
     // Parse completion markers
     const completion = parseCompletionMarkers(output);
 
+    // Track test results for TDD traceability
+    const testResults = extractAndSaveTestResults(output, context.app.projectPath, context.feature.id);
+    if (testResults.saved) {
+      console.error(`\x1b[90m[TDD Track] Saved: ${testResults.pass} pass, ${testResults.fail} fail\x1b[0m`);
+    }
+
     if (completion.blocked) {
       return {
         success: false,
@@ -254,6 +338,12 @@ export function executeFeatureStreaming(
       }
 
       const completion = parseCompletionMarkers(output);
+
+      // Track test results for TDD traceability
+      const testResults = extractAndSaveTestResults(output, context.app.projectPath, context.feature.id);
+      if (testResults.saved) {
+        onOutput(`\x1b[90m[TDD Track] Saved: ${testResults.pass} pass, ${testResults.fail} fail\x1b[0m\n`);
+      }
 
       if (completion.blocked) {
         resolve({

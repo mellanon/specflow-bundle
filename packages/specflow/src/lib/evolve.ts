@@ -111,9 +111,11 @@ export function writeBaseline(
   const specSnapshotPath = join(baselinePath, "spec-v1.0.md");
   const manifestPath = join(baselinePath, "manifest.json");
 
-  // Copy spec byte-for-byte
+  // Copy spec byte-for-byte (atomic: write to temp, then rename)
   if (manifest.spec_baseline) {
-    writeFileSync(specSnapshotPath, specContent);
+    const tmpSpecPath = specSnapshotPath + ".tmp";
+    writeFileSync(tmpSpecPath, specContent);
+    renameSync(tmpSpecPath, specSnapshotPath);
   }
 
   // Atomic write for manifest
@@ -189,12 +191,49 @@ export function evolveFeature(
   // Write baseline
   writeBaseline(projectPath, feature.id, specContent, manifest);
 
-  // Create spec version entry
+  // Create spec version entry and initial ADDED deltas for changelog
   try {
-    const { createSpecVersion } = require("./spec-versions/state") as {
-      createSpecVersion: (featureId: string, hash: string) => any;
+    const { createSpecVersion, getLatestSpecVersion, createSpecDelta } = require("./spec-versions/state") as {
+      createSpecVersion: (featureId: string, hash: string) => { version: number };
+      getLatestSpecVersion: (featureId: string) => { version: number } | null;
+      createSpecDelta: (input: { featureId: string; fromVersion: number; toVersion: number; changeType: string; sectionPath: string; diffContent?: string }) => any;
     };
-    createSpecVersion(feature.id, hashContent(specContent));
+
+    const existingVersion = getLatestSpecVersion(feature.id);
+    const specVersion = createSpecVersion(feature.id, hashContent(specContent));
+
+    // For greenfield features (first version), write ADDED deltas for each spec section
+    // so the changelog captures the feature from specs, not git log
+    if (!existingVersion) {
+      const sectionRegex = /^## (.+)$/gm;
+      let match;
+      const sections: string[] = [];
+      while ((match = sectionRegex.exec(specContent)) !== null) {
+        sections.push(match[1].trim());
+      }
+
+      if (sections.length > 0) {
+        // Write one ADDED delta per major section
+        for (const section of sections) {
+          createSpecDelta({
+            featureId: feature.id,
+            fromVersion: 0,
+            toVersion: specVersion.version,
+            changeType: "ADDED",
+            sectionPath: section,
+          });
+        }
+      } else {
+        // No sections found — write a single ADDED delta for the whole feature
+        createSpecDelta({
+          featureId: feature.id,
+          fromVersion: 0,
+          toVersion: specVersion.version,
+          changeType: "ADDED",
+          sectionPath: feature.name,
+        });
+      }
+    }
   } catch {
     // Non-fatal if spec_versions table issue
   }
