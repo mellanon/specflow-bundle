@@ -5,7 +5,9 @@
 - "process all pending"
 - "autorun"
 - "drive features through pipeline"
+- "drive features through lifecycle"
 - "run full lifecycle"
+- "full lifecycle"
 
 ## Context Requirements
 - [ ] SpecFlow project detected (`.specify/` exists)
@@ -38,6 +40,10 @@ For each target feature, determine the next phase and route:
 | plan | `specflow tasks <id>` |
 | tasks | `specflow phase <id> implement` then implement |
 | implement | `specflow complete <id>` |
+| complete | `specflow harden <id>` |
+| hardened | `specflow review <id>` |
+| review | `specflow approve <id>` or `specflow reject <id>` |
+| approved | `specflow evolve <id>` |
 
 Execute each phase, waiting for completion before moving to the next.
 
@@ -47,6 +53,12 @@ Between phases, check for pending approval gates:
 ```bash
 specflow pending
 ```
+
+Gates can occur at multiple points in the lifecycle:
+- **After specify**: Human approves/rejects spec content
+- **After plan**: Human approves/rejects design decisions
+- **After harden**: Human fills acceptance test template
+- **After review**: Human approves/rejects review package
 
 If gates are pending:
 <!-- F-13 INTEGRATION POINT -->

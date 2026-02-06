@@ -28,20 +28,24 @@ SpecFlow embraces this truth. Instead of letting AI generate code freely, we for
 
 ![SpecFlow Quality Gates](docs/specflow-quality-gates.png)
 
-### The Four-Phase Workflow
+### The Eight-Phase Lifecycle
 
 ```
-SPECIFY → PLAN → TASKS → IMPLEMENT
+SPECIFY → PLAN → TASKS → IMPLEMENT → HARDEN → REVIEW → APPROVE → EVOLVE
 ```
 
 | Phase | What Happens | Gate |
 |-------|--------------|------|
-| **SPECIFY** | Interview-driven requirements. What are we building? Why? | Human approves spec |
-| **PLAN** | Architecture decisions, data models, failure modes | Human approves design |
-| **TASKS** | Break work into reviewable units with dependencies | Human approves breakdown |
+| **SPECIFY** | Interview-driven requirements | Human approves spec |
+| **PLAN** | Architecture decisions, data models | Human approves design |
+| **TASKS** | Break work into reviewable units | Human approves breakdown |
 | **IMPLEMENT** | TDD execution with verification | Tests pass, contracts verified |
+| **HARDEN** | Generate acceptance tests, human fills & ingests results | All acceptance tests pass |
+| **REVIEW** | Compile evidence into review package | Review package shows all green |
+| **APPROVE** | Human reads review package, approves or rejects | Human approval |
+| **EVOLVE** | Snapshot spec as baseline, transition to brownfield | Feature transitions to evolving |
 
-**Each gate requires human approval.** The AI cannot skip ahead. No code gets written until the spec, plan, and tasks are complete.
+**Each gate requires human approval.** The AI cannot skip ahead. No code gets written until the spec, plan, and tasks are complete. No feature ships until it survives hardening, review, and explicit approval.
 
 ### The Result
 
@@ -233,7 +237,7 @@ After completing all steps, verify:
 ### SpecFlow CLI (Unified Commands)
 
 ```bash
-# Core workflow
+# Core lifecycle
 specflow init my-project     # Initialize a new project
 specflow add "New feature"   # Add a feature
 specflow status              # Check progress
@@ -241,6 +245,12 @@ specflow specify F-1         # Create specification
 specflow plan F-1            # Create implementation plan
 specflow tasks F-1           # Generate task breakdown
 specflow implement F-1       # Execute with TDD enforcement
+specflow harden F-1          # Generate acceptance tests
+specflow harden F-1 --ingest # Ingest filled template
+specflow review F-1          # Compile review package
+specflow approve F-1         # Approve feature
+specflow reject F-1 --reason "..." # Reject with reason
+specflow evolve F-1          # Transition to brownfield
 specflow complete F-1        # Mark feature complete
 
 # Contribution preparation
@@ -281,7 +291,7 @@ specflow-ui --port 3000      # Launch on port 3000
 ![SpecFlow Full Lifecycle](docs/specflow-full-lifecycle.png)
 
 ```
-SPECIFY -> PLAN -> TASKS -> IMPLEMENT -> CONTRIB-PREP -> RELEASE
+SPECIFY -> PLAN -> TASKS -> IMPLEMENT -> HARDEN -> REVIEW -> APPROVE -> EVOLVE
 ```
 
 | Phase | What | Output |
@@ -290,10 +300,30 @@ SPECIFY -> PLAN -> TASKS -> IMPLEMENT -> CONTRIB-PREP -> RELEASE
 | **PLAN** | Design architecture, data models | `plan.md` |
 | **TASKS** | Break into reviewable units | `tasks.md` |
 | **IMPLEMENT** | Build with TDD (RED->GREEN->BLUE) | Working code |
-| **CONTRIB-PREP** | Extract clean contribution from private trunk | Tagged branch |
-| **RELEASE** | Publish verified contribution | Released package |
+| **HARDEN** | Generate acceptance tests, human validates | `acceptance-test.md`, `results.json` |
+| **REVIEW** | Compile evidence into review package | `review-package.md` |
+| **APPROVE** | Human reads package, approves or rejects | Feature approved |
+| **EVOLVE** | Snapshot spec as baseline, transition to brownfield | Baseline locked |
 
 Each phase is **gated** - you cannot advance until the current phase is validated.
+
+### Standalone Utilities
+
+| Utility | What | Output |
+|---------|------|--------|
+| **contrib-prep** | Extract clean contribution from private trunk | Tagged contrib branch |
+| **release** | 8-gate release readiness evaluation | `release-readiness.md` |
+| **brownfield** | Iteration loop: scan, diff, apply | Updated specs |
+
+### Brownfield Iteration (post-EVOLVE)
+
+Once a feature reaches EVOLVE, it enters the brownfield iteration loop for continuous improvement:
+
+```
+EVOLVE -> brownfield scan -> brownfield diff -> brownfield apply -> SPECIFY (v2) -> ...
+```
+
+Brownfield iteration detects drift between the locked baseline spec and the current codebase, generating change proposals that feed back into a new SPECIFY cycle.
 
 ### Quality Gates
 
@@ -340,7 +370,8 @@ SpecFlow's `contrib-prep` command bridges private development with the [pai-coll
 +-------------------------------------------------------------+
 |                    SpecFlow                                  |
 |         (Unified CLI + Spec-Driven Workflow)                 |
-|   specflow specify -> plan -> tasks -> implement             |
+|   specflow specify -> plan -> tasks -> implement ->          |
+|          harden -> review -> approve -> evolve               |
 +----------------------------+---------------------------------+
                              | validates against
                              v

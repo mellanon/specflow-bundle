@@ -1,8 +1,8 @@
 ---
 name: SpecFlow
 description: |
-  Orchestrates spec-driven development using the `specflow` CLI (installed at ~/bin/specflow).
-  Enforces SPECIFY → PLAN → TASKS → IMPLEMENT gated workflow with quality evals.
+  Orchestrates spec-driven development using the `specflow` CLI.
+  Enforces SPECIFY → PLAN → TASKS → IMPLEMENT → HARDEN → REVIEW → APPROVE → EVOLVE gated workflow.
   USE WHEN project has `.specify/` or `.specflow/` directory, user mentions F-1/F-2
   pattern, or user says "spec", "specify", "specflow", "new feature".
 ---
@@ -20,12 +20,19 @@ Based on [GitHub's spec-kit](https://github.com/github/spec-kit).
 SpecFlow uses a compiled CLI at `~/bin/specflow`. **All commands in this document are bash commands:**
 
 ```bash
-# These are BASH commands executed via the Bash tool
+# Core lifecycle
 specflow status          # View feature queue
 specflow specify F-1     # Create specification
-specflow plan F-1        # Create technical plan
-specflow tasks F-1       # Create task breakdown
+specflow plan F-1        # Create implementation plan
+specflow tasks F-1       # Generate task breakdown
+specflow implement F-1   # Execute with TDD enforcement
 specflow complete F-1    # Mark feature complete
+specflow harden F-1      # Generate acceptance tests
+specflow harden F-1 --ingest  # Ingest filled results
+specflow review F-1      # Compile review package
+specflow approve F-1     # Approve feature
+specflow reject F-1 --reason "..."  # Reject
+specflow evolve F-1      # Transition to brownfield
 ```
 
 Run `specflow --help` for full command list.
@@ -40,6 +47,11 @@ Run `specflow --help` for full command list.
 | "plan", "architecture", "technical design" | Run PLAN phase | `workflows/sdd-workflow.md` |
 | "tasks", "break down", "implementation units" | Run TASKS phase | `workflows/sdd-workflow.md` |
 | "complete", "finish feature", "mark done" | Run COMPLETE | `workflows/sdd-workflow.md` |
+| "harden", "acceptance test" | Run HARDEN phase | (inline) |
+| "review", "review package" | Run REVIEW phase | (inline) |
+| "approve", "approve feature" | Run APPROVE | (inline) |
+| "reject" | Run REJECT | (inline) |
+| "evolve", "brownfield" | Run EVOLVE/brownfield | (inline) |
 | Anti-pattern detected | Reference docs | `docs/ANTI-PATTERNS.md` |
 | Quality gate questions | Reference docs | `docs/QUALITY-GATES.md` |
 | pai-deps integration | Reference docs | `docs/PAI-DEPS-INTEGRATION.md` |
@@ -77,14 +89,15 @@ Before writing ANY implementation code, verify:
 
 ---
 
-## Four-Phase Workflow
+## Eight-Phase Lifecycle
 
 ```
-SPECIFY -> PLAN -> TASKS -> IMPLEMENT
-   |         |        |         |
- What/Why   How    Work Items  Code
-   ▼         ▼        ▼         ▼
-spec.md   plan.md  tasks.md   src/
+SPECIFY -> PLAN -> TASKS -> IMPLEMENT -> HARDEN -> REVIEW -> APPROVE -> EVOLVE
+   |         |        |         |           |         |          |         |
+ What/Why   How    Work Items  Code     Acceptance Evidence   Human   Brownfield
+   ▼         ▼        ▼         ▼           ▼         ▼          ▼         ▼
+spec.md  plan.md  tasks.md   src/    acceptance  review   approval  baseline
+                                     -test.md   package     gate    manifest
 ```
 
 **Gated phases**: Do NOT advance until current phase is validated.
@@ -154,6 +167,22 @@ Validates:
 - verify.md has real output (no placeholders)
 - Doctorow Gate passed
 
+### Phase 5: Harden (`specflow harden F-N`)
+
+Generates 3-5 acceptance tests via AI. Human fills template with pass/fail/evidence. `specflow harden F-N --ingest` parses results.
+
+### Phase 6: Review (`specflow review F-N`)
+
+Compiles evidence (automated checks + AT results) into review-package.md.
+
+### Phase 7: Approve (`specflow approve F-N`)
+
+Human reads review package. `specflow approve F-N` or `specflow reject F-N --reason "..."`.
+
+### Phase 8: Evolve (`specflow evolve F-N`)
+
+Snapshots spec as baseline, creates manifest, transitions to brownfield iteration.
+
 ---
 
 ## Quick Start
@@ -192,6 +221,15 @@ git checkout main && git merge spec/F-1-feature-name
 | `specflow complete F-N` | Mark feature complete |
 | `specflow eval run` | Run quality evaluations |
 | `specflow revise F-N` | Revise artifact based on feedback |
+| `specflow harden F-N` | Generate acceptance tests |
+| `specflow harden F-N --ingest` | Ingest filled template |
+| `specflow review F-N` | Compile review package |
+| `specflow approve F-N` | Approve feature |
+| `specflow reject F-N --reason "..."` | Reject with reason |
+| `specflow evolve F-N` | Transition to brownfield |
+| `specflow release F-N` | Evaluate release readiness |
+| `specflow contrib-prep F-N` | Prepare contribution |
+| `specflow brownfield scan` | Scan codebase structure |
 
 See `docs/CLI-REFERENCE.md` for full command reference.
 
@@ -202,16 +240,25 @@ See `docs/CLI-REFERENCE.md` for full command reference.
 ```
 project-root/
 ├── .specflow/
-│   └── features.db           # Feature queue (SQLite)
+│   └── specflow.db
 ├── .specify/
 │   ├── memory/constitution.md
 │   ├── debt-ledger.md
-│   └── specs/F-N-<name>/
-│       ├── spec.md
-│       ├── plan.md
-│       ├── tasks.md
-│       ├── docs.md
-│       └── verify.md
+│   ├── specs/F-N-<name>/
+│   │   ├── spec.md
+│   │   ├── plan.md
+│   │   ├── tasks.md
+│   │   ├── docs.md
+│   │   └── verify.md
+│   ├── harden/<featureId>/
+│   │   ├── acceptance-test.md
+│   │   └── results.json
+│   ├── review/<featureId>/
+│   │   ├── review-package.md
+│   │   └── review.json
+│   └── baselines/<featureId>/
+│       ├── spec-v1.0.md
+│       └── manifest.json
 └── src/
 ```
 

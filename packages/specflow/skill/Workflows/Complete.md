@@ -29,7 +29,7 @@ If validation issues exist, use `--force` only with explicit user approval.
 ### Step 3: Present Results
 STOP -- Display completion status and progress summary.
 
-Suggest: "Run `specflow review <feature-id>` for quality checks, or `specflow status` for pipeline overview."
+Suggest: "Run `specflow harden <feature-id>` to generate acceptance tests, or `specflow status` for pipeline overview."
 
 ## Error Handling
 
@@ -37,7 +37,6 @@ Suggest: "Run `specflow review <feature-id>` for quality checks, or `specflow st
 |-------|--------|
 | Validation failed | Show missing artifacts, suggest fixes |
 | Wrong phase | Explain current phase |
-| Doctorow Gate | Present checklist for user review |
 
 ## Notification Tiers
 

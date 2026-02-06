@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "generated": "2026-02-04",
+    "source": "Council debate synthesis",
+    "methodology": "Risk-tiered verification"
+  },
+  "tiers": {
+    "A": {
+      "name": "Deep Testing Required",
+      "description": "Critical path features. Bugs cascade to other features.",
+      "verification": "Manual HITL + integration tests",
+      "features": ["F-001", "F-019"]
+    },
+    "B": {
+      "name": "Verified",
+      "description": "Display and formatting features. Failures are visible but non-cascading.",
+      "verification": "Headless eval + runtime smoke tests + visual check",
+      "features": ["F-011", "F-014", "F-015", "F-016", "F-017", "F-020", "F-021", "F-022"]
+    },
+    "C": {
+      "name": "Manual Gate",
+      "description": "Human touchpoints. Trust failures matter more than functional failures.",
+      "verification": "Manual verification checklist",
+      "features": ["F-012", "F-013", "F-018", "F-023", "F-024"]
+    },
+    "flagged": {
+      "name": "Implementation Complete, Spec Pending",
+      "description": "Pre-dogfooding features. No testable criteria in specs.",
+      "verification": "None - honest gap documentation",
+      "features": ["F-002", "F-003", "F-004", "F-005", "F-006", "F-007", "F-008", "F-009", "F-010"]
+    }
+  },
+  "execution_order": [
+    {
+      "phase": 0,
+      "name": "Bootstrap Validation",
+      "features": ["F-019"],
+      "note": "Must complete before any other hardening"
+    },
+    {
+      "phase": 1,
+      "name": "Tier Classification & Labeling",
+      "features": ["F-002", "F-003", "F-004", "F-005", "F-006", "F-007", "F-008", "F-009", "F-010"],
+      "note": "Update placeholder specs with honest status"
+    },
+    {
+      "phase": 2,
+      "name": "Tier A Deep Testing",
+      "features": ["F-001", "F-019"],
+      "note": "Manual HITL sessions"
+    },
+    {
+      "phase": 3,
+      "name": "Tier B Static + Smoke",
+      "features": ["F-011", "F-014", "F-015", "F-016", "F-017", "F-020", "F-021", "F-022"],
+      "note": "specflow harden --evaluate --all + smoke tests"
+    },
+    {
+      "phase": 4,
+      "name": "Tier C Manual Gates",
+      "features": ["F-012", "F-013", "F-018", "F-023", "F-024"],
+      "note": "Manual verification checklists"
+    }
+  ]
+}

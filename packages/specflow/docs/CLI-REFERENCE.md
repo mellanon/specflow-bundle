@@ -23,6 +23,29 @@ The `specflow` CLI is installed at `~/bin/specflow`. All commands below are **ba
 | Skip | `specflow skip <id>` | Move to end of queue |
 | Run evals | `specflow eval run` | Run quality evaluations |
 | Migrate | `specflow migrate-registry` | Import from SpecKit JSON (one-time) |
+| Harden | `specflow harden <id>` | Generates acceptance-test.md |
+| Harden ingest | `specflow harden <id> --ingest` | Parse filled template -> results.json |
+| Harden status | `specflow harden --status` | Show AT progress per feature |
+| Review | `specflow review <id>` | Compile review package |
+| Review all | `specflow review --all` | Review all features |
+| Review status | `specflow review --status` | Show review status |
+| Approve | `specflow approve <id>` | Approve feature |
+| Reject | `specflow reject <id> --reason "<text>"` | Reject with reason |
+| Evolve | `specflow evolve <id>` | Transition to brownfield |
+| Release | `specflow release <id> [--json]` | 8-gate readiness evaluation |
+| Contrib prep | `specflow contrib-prep <id>` | 5-gate contribution packaging |
+| Brownfield scan | `specflow brownfield scan <path>` | Scan codebase structure |
+| Brownfield diff | `specflow brownfield diff <id>` | Compare scan vs spec |
+| Brownfield apply | `specflow brownfield apply <id>` | Apply approved changes |
+| Inbox | `specflow inbox` | Review queue — pending approvals ranked by priority |
+| Inbox verbose | `specflow inbox --verbose` | Expanded view with per-item guidance |
+| Inbox JSON | `specflow inbox --json` | JSON output for tooling |
+| Audit all | `specflow audit` | Spec-reality drift detection, all features |
+| Audit single | `specflow audit <id>` | Audit one feature |
+| Audit JSON | `specflow audit --json` | JSON report |
+| Audit fix | `specflow audit --fix` | Print suggested fix commands only (pipeable) |
+| Audit check | `specflow audit --check <name>` | Run single checker (db-status, spec-code, json-sync, phase-artifacts, spec-freshness) |
+| Audit by status | `specflow audit --status <status>` | Filter by feature status |
 
 ## Full Command Help
 
@@ -64,3 +87,59 @@ specflow revise F-1 --spec --feedback "test" --dry-run
 ```
 
 Every revision is tracked with unique ID, timestamp, reason, and original content preserved.
+
+## Harden Commands
+
+```bash
+specflow harden F-1                    # Generate acceptance tests
+specflow harden F-1 --ingest           # Ingest filled template
+specflow harden F-1 --dry-run          # Preview generation
+specflow harden --all                  # Generate for all implemented features
+specflow harden --status               # Show AT progress
+```
+
+## Review & Approval
+
+```bash
+specflow review F-1                    # Compile review package
+specflow review --all                  # Review all features
+specflow review --checks-only          # Run automated checks only
+specflow review --status               # Show review status
+specflow approve F-1                   # Approve feature
+specflow reject F-1 --reason "Missing edge case handling"
+```
+
+## Inbox & Audit
+
+```bash
+specflow inbox                            # Priority-ranked review queue
+specflow inbox --verbose                  # Expanded view with decision guidance
+specflow inbox --json                     # JSON for tooling
+
+specflow audit                            # Audit all features
+specflow audit F-1                        # Audit single feature
+specflow audit --json                     # JSON report
+specflow audit --fix                      # Print fix commands only (pipeable)
+specflow audit --check spec-code          # Run only spec-code alignment check
+specflow audit --status complete          # Audit only completed features
+```
+
+## Evolve & Brownfield
+
+```bash
+specflow evolve F-1                    # Snapshot baseline, transition to brownfield
+specflow brownfield scan ./src         # Scan codebase
+specflow brownfield diff F-1           # Compare scan vs spec
+specflow brownfield apply F-1          # Apply approved changes
+```
+
+## Release & Contribution
+
+```bash
+specflow release F-1                   # Run 8-gate evaluation
+specflow release F-1 --json            # JSON output
+specflow contrib-prep F-1              # Full 5-gate workflow
+specflow contrib-prep F-1 --inventory  # Inventory only
+specflow contrib-prep F-1 --sanitize   # Scan only
+specflow contrib-prep F-1 --dry-run    # Preview
+```

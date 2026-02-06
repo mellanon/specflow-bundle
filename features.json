@@ -7,145 +7,205 @@
   },
   {
     "id": "F-2",
-    "name": "Spec versioning — snapshot on phase completion",
+    "name": "Spec versioning \u2014 snapshot on phase completion",
     "description": "When a feature completes the SPECIFY phase (spec.md written), automatically create a version snapshot in spec_versions. When spec is revised via `specflow revise`, create a new version and compute delta records in spec_deltas. This gives every spec a version history without manual intervention.",
-    "dependencies": ["F-1"],
+    "dependencies": [
+      "F-1"
+    ],
     "priority": 1
   },
   {
     "id": "F-3",
     "name": "Brownfield codebase scanner",
     "description": "New `specflow brownfield scan` subcommand that analyzes an existing codebase directory and extracts a structural inventory: files, exports, functions, types, dependencies. Output is a JSON manifest stored in .specify/brownfield/scan.json. Uses AST parsing for TypeScript or falls back to heuristic extraction for other languages.",
-    "dependencies": ["F-1"],
+    "dependencies": [
+      "F-1"
+    ],
     "priority": 2
   },
   {
     "id": "F-4",
     "name": "Brownfield delta-spec generator",
     "description": "New `specflow brownfield diff` subcommand that compares the codebase scan (from F-3) against the latest spec baseline and produces a delta-spec showing ADDED/MODIFIED/REMOVED elements. Uses AI (headless Claude) to classify changes semantically, not just structurally. Output: delta-spec.md with categorized changes and proposed spec updates.",
-    "dependencies": ["F-2", "F-3"],
+    "dependencies": [
+      "F-2",
+      "F-3"
+    ],
     "priority": 2
   },
   {
     "id": "F-5",
-    "name": "Brownfield spec evolution — apply delta to create new version",
+    "name": "Brownfield spec evolution \u2014 apply delta to create new version",
     "description": "New `specflow brownfield apply` subcommand that takes a reviewed delta-spec and applies approved changes to create a new spec version. Human approves each change category (ADDED/MODIFIED/REMOVED) via interactive prompts (or auto-approve in headless mode). Committed version stored in spec_versions with full delta trail.",
-    "dependencies": ["F-4"],
+    "dependencies": [
+      "F-4"
+    ],
     "priority": 2
   },
   {
     "id": "F-6",
-    "name": "Review command — automated checks layer",
-    "description": "New `specflow review` command, layer 1: run automated checks (typecheck, lint, test) and verify spec-code file alignment (do files referenced in spec exist? do exports match?). Produces review.md artifact in .specify/reviews/ with pass/fail per check.",
+    "name": "Review command \u2014 automated checks and file alignment",
+    "description": "Layer 1 of specflow review: runs automated checks (typecheck, lint, test) per detected project type, verifies spec-code file alignment (backtick references exist in codebase). Produces review.json with pass/fail per check and alignment stats.",
     "priority": 3
   },
   {
     "id": "F-7",
-    "name": "Review command — AI spec-code alignment verification",
-    "description": "Layer 2 of `specflow review`: AI-powered analysis (headless Claude) that reads spec.md and the implementation code, then evaluates whether the code faithfully implements the specification. Extends the Doctorow Gate pattern to review scope. Appends findings to review.md.",
-    "dependencies": ["F-6"],
+    "name": "Review command \u2014 AI spec-code alignment (SUPERSEDED)",
+    "description": "SUPERSEDED: AI review removed from the review loop during lifecycle extension dogfooding. Review now compiles evidence (automated checks + harden results) for human decision. See revised F-024.",
+    "dependencies": [
+      "F-6"
+    ],
     "priority": 3
   },
   {
     "id": "F-8",
-    "name": "Review command — structured human review template",
-    "description": "Layer 3 of `specflow review`: generates a structured review template for human reviewers with sections pre-filled from automated and AI findings. Includes checklist items, risk areas flagged by AI, and a sign-off section. Output appended to review.md.",
-    "dependencies": ["F-7"],
+    "name": "Review command \u2014 review package for human decision",
+    "description": "Generates a comprehensive review-package.md compiling all evidence (automated checks, file alignment, acceptance test results) for human review. Always generated (not just on failure). Human reads package and runs approve/reject. Replaces the previous AI-dependent human template.",
+    "dependencies": [
+      "F-7"
+    ],
     "priority": 3
   },
   {
     "id": "F-9",
-    "name": "Release command — gate evaluation engine",
-    "description": "New `specflow release` command that evaluates 8 gates sequentially: (1) all features complete, (2) quality evals pass, (3) CHANGELOG generated from spec deltas, (4) file inventory produced. Stops on first failure with actionable guidance. Produces release-readiness.md report.",
-    "dependencies": ["F-2"],
+    "name": "Release command \u2014 8-gate readiness evaluation",
+    "description": "specflow release evaluates 8 sequential gates: (1) all features complete, (2) quality evals pass, (3) CHANGELOG exists, (4) file inventory + version tag, (5) PII/secrets scan, (6) contrib branch exists, (7) sanitization verified, (8) PR template generated. Stops on first failure with remediation guidance.",
+    "dependencies": [
+      "F-2"
+    ],
     "priority": 4
   },
   {
     "id": "F-10",
-    "name": "Release command — contribution packaging",
-    "description": "Gates 5-8 of `specflow release`: (5) PII/secrets scan, (6) contribution branch creation from upstream/main, (7) sanitization verification (no personal paths, no credentials), (8) PR template generation. Integrates with existing contrib-prep command. Output: ready-to-push branch with PR description.",
-    "dependencies": ["F-9"],
+    "name": "Contribution packaging \u2014 5-gate workflow",
+    "description": "specflow contrib-prep runs 5-phase workflow with mandatory human gates: (1) inventory review, (2) sanitization scan (gitleaks + custom patterns), (3) pre-extraction approval, (4) tag-before-contrib extraction, (5) final verification. Supports resume from any gate.",
+    "dependencies": [
+      "F-9"
+    ],
     "priority": 4
   },
   {
     "id": "F-11",
-    "name": "Pipeline progress file — inter-session visibility",
-    "description": "During headless pipeline execution, write a structured progress file at .specify/pipeline/progress.json, updated at each phase transition. Schema: { feature_id, current_phase, status (running|paused|blocked|complete), started_at, phases: [{ name, status, started_at, completed_at, duration_seconds, artifacts_produced }], errors: [] }. File is the single source of truth for pipeline state — other sessions, the specflow-ui dashboard, and the PAI observability server (port 4000) can all consume it. New `specflow status` command reads progress.json and renders a summary. New `specflow status --watch` polls every 5 seconds and renders a live updating view. This is the VISIBILITY primitive — passive ambient mode, never interrupts the operator.",
+    "name": "Pipeline progress file \u2014 inter-session visibility",
+    "description": "During headless pipeline execution, write a structured progress file at .specify/pipeline/progress.json, updated at each phase transition. Schema: { feature_id, current_phase, status (running|paused|blocked|complete), started_at, phases: [{ name, status, started_at, completed_at, duration_seconds, artifacts_produced }], errors: [] }. File is the single source of truth for pipeline state \u2014 other sessions, the specflow-ui dashboard, and the PAI observability server (port 4000) can all consume it. New `specflow status` command reads progress.json and renders a summary. New `specflow status --watch` polls every 5 seconds and renders a live updating view. This is the VISIBILITY primitive \u2014 passive ambient mode, never interrupts the operator.",
     "priority": 2
   },
   {
     "id": "F-12",
-    "name": "Phase transition notifications — three-tier multi-channel alerts",
-    "description": "Notification system with three urgency tiers from the council debate UX design. CRITICAL tier: voice server (curl localhost:8888) + macOS desktop notification (osascript) + terminal-blocking prompt. REVIEW tier: voice server + desktop notification, no terminal block. AMBIENT tier: log entry only, no interruption. Each phase transition emits a notification at the configured tier. Configuration in .specflow/config.yaml: notification_backends (array of: voice, desktop, webhook), default_urgency_by_phase (map of phase→tier), custom webhook URL. Notifications are fire-and-forget — delivery failure never blocks pipeline. Trust model: v1 defaults to REVIEW tier for all phase completions and CRITICAL for failures (start noisy, operator tunes down). Observability integration: emit structured event to progress.json that the PAI observability server can ingest.",
-    "dependencies": ["F-11"],
+    "name": "Phase transition notifications \u2014 three-tier multi-channel alerts",
+    "description": "Notification system with three urgency tiers from the council debate UX design. CRITICAL tier: voice server (curl localhost:8888) + macOS desktop notification (osascript) + terminal-blocking prompt. REVIEW tier: voice server + desktop notification, no terminal block. AMBIENT tier: log entry only, no interruption. Each phase transition emits a notification at the configured tier. Configuration in .specflow/config.yaml: notification_backends (array of: voice, desktop, webhook), default_urgency_by_phase (map of phase\u2192tier), custom webhook URL. Notifications are fire-and-forget \u2014 delivery failure never blocks pipeline. Trust model: v1 defaults to REVIEW tier for all phase completions and CRITICAL for failures (start noisy, operator tunes down). Observability integration: emit structured event to progress.json that the PAI observability server can ingest.",
+    "dependencies": [
+      "F-11"
+    ],
     "priority": 2
   },
   {
     "id": "F-13",
-    "name": "Approval gates — annotation-driven human-in-the-loop",
-    "description": "Configurable approval gates at phase boundaries, driven by annotations in spec files or pipeline config. Spec authors declare urgency: @interrupt:critical (terminal-blocking — pipeline pauses, operator must run `specflow approve F-N` or `specflow reject F-N --reason`), @interrupt:review (push notification — pipeline pauses but operator is only alerted, not blocked in terminal), @interrupt:ambient (logged only — pipeline continues). Gate config in .specflow/config.yaml: gates map of phase_boundary→urgency_tier, with override per feature. When gate triggers: write structured JSON to .specify/pipeline/pending-approval.json with { feature_id, gate, phase_from, phase_to, urgency, summary, artifacts_to_review, requested_at }. Pipeline outputs structured JSON (NOT exit codes) indicating awaiting_approval state. The specflow-ui dashboard shows pending approvals with one-click approve/reject. Timeout per gate configurable: default is wait-indefinitely for critical, 30min for review (auto-approve on timeout).",
-    "dependencies": ["F-11", "F-12"],
+    "name": "Approval gates \u2014 annotation-driven human-in-the-loop",
+    "description": "Configurable approval gates at phase boundaries, driven by annotations in spec files or pipeline config. Spec authors declare urgency: @interrupt:critical (terminal-blocking \u2014 pipeline pauses, operator must run `specflow approve F-N` or `specflow reject F-N --reason`), @interrupt:review (push notification \u2014 pipeline pauses but operator is only alerted, not blocked in terminal), @interrupt:ambient (logged only \u2014 pipeline continues). Gate config in .specflow/config.yaml: gates map of phase_boundary\u2192urgency_tier, with override per feature. When gate triggers: write structured JSON to .specify/pipeline/pending-approval.json with { feature_id, gate, phase_from, phase_to, urgency, summary, artifacts_to_review, requested_at }. Pipeline outputs structured JSON (NOT exit codes) indicating awaiting_approval state. The specflow-ui dashboard shows pending approvals with one-click approve/reject. Timeout per gate configurable: default is wait-indefinitely for critical, 30min for review (auto-approve on timeout).",
+    "dependencies": [
+      "F-11",
+      "F-12"
+    ],
     "priority": 3
   },
   {
     "id": "F-14",
-    "name": "Pipeline failure recovery — graceful degradation and resume",
-    "description": "Resilient pipeline execution with configurable artifact requirements per phase. Configuration in .specflow/config.yaml: artifact_requirements map of phase→{ required: [filenames], optional: [filenames] }. Defaults: SPECIFY requires spec.md; PLAN requires plan.md, optional architecture.md; TASKS requires tasks.md; IMPLEMENT requires source code and tests, optional docs.md and verify.md; COMPLETE requires Doctorow gate pass. When a required artifact is missing, pipeline sets feature status to 'blocked' (recoverable, not terminal failure), writes error context to .specify/pipeline/failure.json with { feature_id, phase, error, missing_artifacts, suggestion, git_sha_at_failure }, and emits CRITICAL notification. When an optional artifact is missing, pipeline logs a warning and continues. New `specflow pipeline resume F-N` command picks up from the last successful phase using progress.json state. This directly addresses the dogfooding issue where headless pipeline crashed on missing docs.md.",
-    "dependencies": ["F-11", "F-12"],
+    "name": "Pipeline failure recovery \u2014 graceful degradation and resume",
+    "description": "Resilient pipeline execution with configurable artifact requirements per phase. Configuration in .specflow/config.yaml: artifact_requirements map of phase\u2192{ required: [filenames], optional: [filenames] }. Defaults: SPECIFY requires spec.md; PLAN requires plan.md, optional architecture.md; TASKS requires tasks.md; IMPLEMENT requires source code and tests, optional docs.md and verify.md; COMPLETE requires Doctorow gate pass. When a required artifact is missing, pipeline sets feature status to 'blocked' (recoverable, not terminal failure), writes error context to .specify/pipeline/failure.json with { feature_id, phase, error, missing_artifacts, suggestion, git_sha_at_failure }, and emits CRITICAL notification. When an optional artifact is missing, pipeline logs a warning and continues. New `specflow pipeline resume F-N` command picks up from the last successful phase using progress.json state. This directly addresses the dogfooding issue where headless pipeline crashed on missing docs.md.",
+    "dependencies": [
+      "F-11",
+      "F-12"
+    ],
     "priority": 2
   },
   {
     "id": "F-15",
-    "name": "Execution audit log — phase-level tracking in SQLite",
+    "name": "Execution audit log \u2014 phase-level tracking in SQLite",
     "description": "New execution_log table in features.db with columns: id (auto), feature_id (text), phase (text), started_at (datetime), completed_at (datetime), duration_seconds (integer), status (text: success|failed|skipped|blocked), git_sha_before (text), git_sha_after (text), artifacts_produced (json array), error_message (text nullable), urgency_tier (text nullable), approval_status (text nullable: approved|rejected|auto-approved|timeout). Migration 008. Every pipeline phase execution writes a row on start (status=running) and updates on completion. `specflow log F-N` renders execution history as a timeline. `specflow log F-N --phase implement` shows details for a specific phase. Git SHA tracking enables rollback: `specflow rollback F-N --to-phase plan` resets to git_sha_before of the implement phase. The specflow-ui dashboard consumes this table for the phase timeline visualization.",
-    "dependencies": ["F-1"],
+    "dependencies": [
+      "F-1"
+    ],
     "priority": 3
   },
   {
     "id": "F-16",
-    "name": "Autorun — full-lifecycle self-orchestration loop",
-    "description": "New `specflow autorun` command that drives all pending features through the complete SPECIFY → PLAN → TASKS → IMPLEMENT → COMPLETE pipeline without stopping between features or phases. Core behavior: (1) select next incomplete feature via priority order from features.db, (2) drive it through each remaining phase by invoking the existing phase commands (specify, plan, tasks, implement, complete), (3) respect F-13 approval gates at configured phase boundaries, (4) on failure use F-14 recovery (mark blocked, skip to next feature), (5) write F-11 progress and F-15 audit log throughout, (6) emit F-12 notifications at phase transitions, (7) loop to step 1 until all features are complete or all remaining are blocked. Options: --feature F-N (single feature, all phases), --from-phase specify|plan|tasks|implement (resume mid-lifecycle), --dry-run (show execution plan without running), --max-features N (limit batch size), --stop-on-failure (halt pipeline on first blocked feature instead of skipping). Exit conditions: all features complete, all remaining features blocked, operator sends SIGINT, or approval gate rejection. This is the orchestrator that replaces Maestro's document-loop pattern for single-agent execution in Claude Code. The existing runLoop in runner.ts handles IMPLEMENT-only; autorun extends this to all phases. Headless mode (--headless) passes through to each phase command for non-interactive execution.",
-    "dependencies": ["F-11", "F-12", "F-13", "F-14", "F-15"],
+    "name": "Autorun \u2014 full-lifecycle self-orchestration loop",
+    "description": "New `specflow autorun` command that drives all pending features through the complete SPECIFY \u2192 PLAN \u2192 TASKS \u2192 IMPLEMENT \u2192 COMPLETE pipeline without stopping between features or phases. Core behavior: (1) select next incomplete feature via priority order from features.db, (2) drive it through each remaining phase by invoking the existing phase commands (specify, plan, tasks, implement, complete), (3) respect F-13 approval gates at configured phase boundaries, (4) on failure use F-14 recovery (mark blocked, skip to next feature), (5) write F-11 progress and F-15 audit log throughout, (6) emit F-12 notifications at phase transitions, (7) loop to step 1 until all features are complete or all remaining are blocked. Options: --feature F-N (single feature, all phases), --from-phase specify|plan|tasks|implement (resume mid-lifecycle), --dry-run (show execution plan without running), --max-features N (limit batch size), --stop-on-failure (halt pipeline on first blocked feature instead of skipping). Exit conditions: all features complete, all remaining features blocked, operator sends SIGINT, or approval gate rejection. This is the orchestrator that replaces Maestro's document-loop pattern for single-agent execution in Claude Code. The existing runLoop in runner.ts handles IMPLEMENT-only; autorun extends this to all phases. Headless mode (--headless) passes through to each phase command for non-interactive execution.",
+    "dependencies": [
+      "F-11",
+      "F-12",
+      "F-13",
+      "F-14",
+      "F-15"
+    ],
     "priority": 2
   },
   {
     "id": "F-17",
-    "name": "Evolve command — greenfield-to-brownfield handoff",
-    "description": "New `specflow evolve F-N` command that transitions a completed feature from greenfield (v1.0) into brownfield iteration (v1.1+). When a feature reaches COMPLETE status, `evolve` snapshots its spec as a baseline in .specify/baselines/{feature_id}/spec-v1.0.md, copies implementation file inventory to a manifest, and transitions the feature state to 'evolving'. Subsequent changes use the brownfield workflow (F-3 scan, F-4 diff, F-5 apply) against this baseline. The evolve command also generates a delta-spec template pre-populated with the feature's current structure so the operator can describe what's changing for the next iteration. Without this command, there is no formal path from 'feature complete' to 'feature needs changes' — the operator must manually re-enter the brownfield workflow. This closes the gap identified in the landscape research §9 and §13: 'Design v1.0→v1.1 handoff — how a completed SpecFlow feature becomes input for next brownfield iteration.'",
-    "dependencies": ["F-3", "F-4", "F-5"],
+    "name": "Evolve command \u2014 greenfield-to-brownfield handoff",
+    "description": "New `specflow evolve F-N` command that transitions a completed feature from greenfield (v1.0) into brownfield iteration (v1.1+). When a feature reaches COMPLETE status, `evolve` snapshots its spec as a baseline in .specify/baselines/{feature_id}/spec-v1.0.md, copies implementation file inventory to a manifest, and transitions the feature state to 'evolving'. Subsequent changes use the brownfield workflow (F-3 scan, F-4 diff, F-5 apply) against this baseline. The evolve command also generates a delta-spec template pre-populated with the feature's current structure so the operator can describe what's changing for the next iteration. Without this command, there is no formal path from 'feature complete' to 'feature needs changes' \u2014 the operator must manually re-enter the brownfield workflow. This closes the gap identified in the landscape research \u00a79 and \u00a713: 'Design v1.0\u2192v1.1 handoff \u2014 how a completed SpecFlow feature becomes input for next brownfield iteration.'",
+    "dependencies": [
+      "F-3",
+      "F-4",
+      "F-5"
+    ],
     "priority": 2
   },
   {
     "id": "F-18",
-    "name": "Review gate — REVIEW status and pipeline pause",
-    "description": "Add a REVIEW status to the feature state machine in features.db. When the review command (F-6/7/8) completes and generates review.md, the feature transitions to status='review' and the pipeline pauses. The operator is notified via F-12 (REVIEW tier) that artifacts are ready for inspection. Pipeline resumes only when the operator runs `specflow approve-review F-N` (advances to next phase) or `specflow request-changes F-N --reason '...'` (returns feature to IMPLEMENT status with feedback written to .specify/reviews/{feature_id}/feedback.md). This implements the vibe-kanban pattern: InProgress → InReview → (feedback) → InProgress OR InReview → Done. Without this feature, F-6/7/8 generate review artifacts but the pipeline never stops for a human to look at them — defeating the purpose of review. The autorun loop (F-16) respects this gate: when a feature enters REVIEW status, autorun skips it and moves to the next feature, returning to it after approval.",
-    "dependencies": ["F-12", "F-13"],
+    "name": "Review gate \u2014 REVIEW status and pipeline pause",
+    "description": "Add a REVIEW status to the feature state machine in features.db. When the review command (F-6/7/8) completes and generates review.md, the feature transitions to status='review' and the pipeline pauses. The operator is notified via F-12 (REVIEW tier) that artifacts are ready for inspection. Pipeline resumes only when the operator runs `specflow approve-review F-N` (advances to next phase) or `specflow request-changes F-N --reason '...'` (returns feature to IMPLEMENT status with feedback written to .specify/reviews/{feature_id}/feedback.md). This implements the vibe-kanban pattern: InProgress \u2192 InReview \u2192 (feedback) \u2192 InProgress OR InReview \u2192 Done. Without this feature, F-6/7/8 generate review artifacts but the pipeline never stops for a human to look at them \u2014 defeating the purpose of review. The autorun loop (F-16) respects this gate: when a feature enters REVIEW status, autorun skips it and moves to the next feature, returning to it after approval.",
+    "dependencies": [
+      "F-12",
+      "F-13"
+    ],
     "priority": 2
   },
   {
     "id": "F-19",
-    "name": "Harden command — guided acceptance testing protocol",
-    "description": "New `specflow harden F-N` command that runs a guided acceptance testing session. Reads the feature's spec.md to extract acceptance criteria and functional requirements, then generates a structured test protocol in .specify/harden/{feature_id}/protocol.md with numbered test cases. Each test case includes: description, preconditions, steps, expected result, and a pass/fail field. The command enters an interactive loop where the agent executes each test (browser automation via Playwright for UI tests, CLI invocation for API tests, or manual instruction for human-only tests), the operator observes and confirms pass/fail, and results are recorded. The operator can steer ('skip this', 'add a test for X', 'try edge case Y') while the agent drives execution. On completion, generates harden-report.md with pass/fail summary and any issues found. Features that pass all required acceptance tests can proceed to COMPLETE; failures return the feature to IMPLEMENT with specific issues documented. This fills the HARDEN phase gap identified in the landscape research §11 where acceptance testing had zero tooling.",
+    "name": "Harden command \u2014 acceptance test generation and ingestion",
+    "description": "`specflow harden F-N` generates 3-5 workflow-level acceptance tests via AI and writes acceptance-test.md. Human fills the template with pass/fail/evidence, then runs `specflow harden F-N --ingest` to parse results. Supports --all for batch generation, --status for AT-level progress. Features passing all ATs proceed to review; failures return to implement.",
     "priority": 3
   },
   {
     "id": "F-20",
-    "name": "Semantic versioning — tag and version management",
-    "description": "New `specflow version` command suite for semantic versioning. `specflow version bump major|minor|patch` creates annotated git tags (vX.Y.Z) following semver conventions. `specflow version current` shows the current version derived from git tags. `specflow version changelog` generates CHANGELOG.md entries from spec deltas (F-2) between versions, using Keep a Changelog format with [Unreleased] → versioned sections. The release command (F-9) integrates with versioning: gate 3 (CHANGELOG) uses `specflow version changelog` to auto-generate entries, and gate 4 (file inventory) includes the version tag. The tag-before-contrib pattern is enforced: `specflow release` requires a version tag before contribution packaging (F-10) can proceed. This ports the semantic versioning capability from SpecFirst into SpecFlow as recommended in the landscape research §4.",
-    "dependencies": ["F-2", "F-9"],
+    "name": "Semantic versioning \u2014 tag and version management",
+    "description": "New `specflow version` command suite for semantic versioning. `specflow version bump major|minor|patch` creates annotated git tags (vX.Y.Z) following semver conventions. `specflow version current` shows the current version derived from git tags. `specflow version changelog` generates CHANGELOG.md entries from spec deltas (F-2) between versions, using Keep a Changelog format with [Unreleased] \u2192 versioned sections. The release command (F-9) integrates with versioning: gate 3 (CHANGELOG) uses `specflow version changelog` to auto-generate entries, and gate 4 (file inventory) includes the version tag. The tag-before-contrib pattern is enforced: `specflow release` requires a version tag before contribution packaging (F-10) can proceed. This ports the semantic versioning capability from SpecFirst into SpecFlow as recommended in the landscape research \u00a74.",
+    "dependencies": [
+      "F-2",
+      "F-9"
+    ],
     "priority": 3
   },
   {
     "id": "F-21",
-    "name": "Phase hooks — pre/post execution hooks per phase",
-    "description": "Configurable pre-phase and post-phase hooks that execute at phase boundaries. Configuration in .specflow/config.yaml under hooks: { pre_specify: ['command'], post_specify: ['command'], pre_plan: ['command'], ... }. Pre-hooks run before a phase starts and can abort the phase (non-zero exit = phase skipped with 'blocked' status). Post-hooks run after a phase completes successfully and are fire-and-forget (failures logged but don't affect phase status). Use cases: pre_implement could run `npm install` or `docker compose up`; post_complete could trigger a deployment script or notify an external system; pre_specify could load project context from an external source. Hooks receive environment variables: SPECFLOW_FEATURE_ID, SPECFLOW_PHASE, SPECFLOW_PROJECT_PATH, SPECFLOW_ARTIFACTS_DIR. The autorun loop (F-16) and individual phase commands both respect hooks. This implements the vibe-kanban 'action chaining' pattern for setup → agent → cleanup sequences.",
+    "name": "Phase hooks \u2014 pre/post execution hooks per phase",
+    "description": "Configurable pre-phase and post-phase hooks that execute at phase boundaries. Configuration in .specflow/config.yaml under hooks: { pre_specify: ['command'], post_specify: ['command'], pre_plan: ['command'], ... }. Pre-hooks run before a phase starts and can abort the phase (non-zero exit = phase skipped with 'blocked' status). Post-hooks run after a phase completes successfully and are fire-and-forget (failures logged but don't affect phase status). Use cases: pre_implement could run `npm install` or `docker compose up`; post_complete could trigger a deployment script or notify an external system; pre_specify could load project context from an external source. Hooks receive environment variables: SPECFLOW_FEATURE_ID, SPECFLOW_PHASE, SPECFLOW_PROJECT_PATH, SPECFLOW_ARTIFACTS_DIR. The autorun loop (F-16) and individual phase commands both respect hooks. This implements the vibe-kanban 'action chaining' pattern for setup \u2192 agent \u2192 cleanup sequences.",
     "priority": 3
   },
   {
     "id": "F-22",
-    "name": "SpecFlow skill layer — SKILL.md routing and workflow files",
-    "description": "Create the PAI skill layer that wraps all SpecFlow CLI commands into natural language workflows. Architecture follows the PAI 'Code Before Prompts' principle: TypeScript packages (code) → specflow CLI (tool) → SKILL.md + workflows (skill). Structure: skills/specflow/SKILL.md (routing hub, <500 lines) + skills/specflow/workflows/*.md (one per major operation). SKILL.md provides natural language routing table mapping user intent to CLI commands, with 'USE WHEN' trigger phrases for skill discovery. Workflows implement the three interaction modes from the vibe-kanban council debate: (1) terminal-blocking for approval gates and critical failures, (2) persistent visual via specflow-ui dashboard, (3) passive ambient via progress.json and --headless flag. The skill embodies the exception-based attention model: agents work autonomously, humans intervene only on state transitions (completion, approval, failure). Notification routing follows the 'start noisy, tune down' principle — v1 pushes critical+review tiers, operator configures down as trust builds. Every notification must answer: 'Why does this require human judgment RIGHT NOW?' Workflow files cover: autorun (F-16 full lifecycle), specify/plan/tasks/implement/complete (individual phases), harden (F-19 acceptance testing), evolve (F-17 brownfield handoff), review-gate (F-18 pipeline pause), brownfield (F-3/4/5 scan/diff/apply), release (F-9/10 gate evaluation), status (F-11 monitoring), and approve/reject (F-13 gate responses). Two-phase retrieval pattern where applicable: specflow status → user selects feature → specflow <command> F-N. Approval gate UX uses structured JSON output with urgency field (not exit codes) per council consensus. Skill metadata declares: supports_headless, notification_points, checkpoint_strategy, interaction_modes. The skill's job is ROUTING and RENDERING — CLI does the work, skill maps natural language to commands and presents results conversationally. Follows gold standard patterns from _JIRA, _COUPA, _CONTEXT skills.",
-    "dependencies": ["F-11", "F-12", "F-13", "F-16", "F-18", "F-19"],
+    "name": "SpecFlow skill layer \u2014 SKILL.md routing and workflow files",
+    "description": "Create the PAI skill layer that wraps all SpecFlow CLI commands into natural language workflows. Architecture follows the PAI 'Code Before Prompts' principle: TypeScript packages (code) \u2192 specflow CLI (tool) \u2192 SKILL.md + workflows (skill). Structure: skills/specflow/SKILL.md (routing hub, <500 lines) + skills/specflow/workflows/*.md (one per major operation). SKILL.md provides natural language routing table mapping user intent to CLI commands, with 'USE WHEN' trigger phrases for skill discovery. Workflows implement the three interaction modes from the vibe-kanban council debate: (1) terminal-blocking for approval gates and critical failures, (2) persistent visual via specflow-ui dashboard, (3) passive ambient via progress.json and --headless flag. The skill embodies the exception-based attention model: agents work autonomously, humans intervene only on state transitions (completion, approval, failure). Notification routing follows the 'start noisy, tune down' principle \u2014 v1 pushes critical+review tiers, operator configures down as trust builds. Every notification must answer: 'Why does this require human judgment RIGHT NOW?' Workflow files cover: autorun (F-16 full lifecycle), specify/plan/tasks/implement/complete (individual phases), harden (F-19 acceptance testing), evolve (F-17 brownfield handoff), review-gate (F-18 pipeline pause), brownfield (F-3/4/5 scan/diff/apply), release (F-9/10 gate evaluation), status (F-11 monitoring), and approve/reject (F-13 gate responses). Two-phase retrieval pattern where applicable: specflow status \u2192 user selects feature \u2192 specflow <command> F-N. Approval gate UX uses structured JSON output with urgency field (not exit codes) per council consensus. Skill metadata declares: supports_headless, notification_points, checkpoint_strategy, interaction_modes. The skill's job is ROUTING and RENDERING \u2014 CLI does the work, skill maps natural language to commands and presents results conversationally. Follows gold standard patterns from _JIRA, _COUPA, _CONTEXT skills.",
+    "dependencies": [
+      "F-11",
+      "F-12",
+      "F-13",
+      "F-16",
+      "F-18",
+      "F-19"
+    ],
     "priority": 2
+  },
+  {
+    "id": "F-25",
+    "name": "Inbox command — multi-feature review queue and batch approve",
+    "description": "New `specflow inbox` command that surfaces all features awaiting human review as a priority-ranked queue. P0 (failures/exceptions), P1 (passed, newly arrived), P2 (passed, routine). Shows one-line summary per feature with verdict, time-in-queue, and quick action commands. Supports batch approve for passing items (`specflow approve F-1 F-2 F-3`). The single decision surface for human supervisors managing agent swarms. Reads from approval_gates table and review artifacts.",
+    "dependencies": [
+      "F-8",
+      "F-13"
+    ],
+    "priority": 3
   }
 ]
