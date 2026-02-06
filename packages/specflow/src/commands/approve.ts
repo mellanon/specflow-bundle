@@ -7,7 +7,7 @@ import { initDatabase, getDbPath, getDbInstance, dbExists } from "../lib/databas
 import { approveGate } from "../lib/gate-resolver";
 import { writePendingApprovalFile } from "../lib/pending-approval-writer";
 
-export function approveCommand(featureId: string): void {
+export function approveCommand(featureIds: string[]): void {
   const projectPath = process.cwd();
   const dbPath = getDbPath(projectPath);
 
@@ -19,12 +19,27 @@ export function approveCommand(featureId: string): void {
   initDatabase(dbPath);
   const db = getDbInstance();
 
-  const result = approveGate(db, featureId);
-  if (!result) {
-    console.error(`No pending approval gate found for ${featureId}`);
-    process.exit(1);
+  let approved = 0;
+  let failed = 0;
+
+  for (const featureId of featureIds) {
+    const result = approveGate(db, featureId);
+    if (!result) {
+      console.error(`No pending approval gate found for ${featureId}`);
+      failed++;
+    } else {
+      console.log(`[GATE APPROVED] ${featureId} at ${result.phase_boundary}`);
+      approved++;
+    }
   }
 
   writePendingApprovalFile(db, projectPath);
-  console.log(`[GATE APPROVED] ${featureId} at ${result.phase_boundary}`);
+
+  if (featureIds.length > 1) {
+    console.log(`\nBatch result: ${approved} approved, ${failed} failed`);
+  }
+
+  if (failed > 0 && approved === 0) {
+    process.exit(1);
+  }
 }

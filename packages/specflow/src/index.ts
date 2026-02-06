@@ -44,8 +44,10 @@ import { versionCommand } from "./commands/version";
 import { evolveCommand } from "./commands/evolve";
 import { requestChangesCommand } from "./commands/request-changes";
 import { hardenCommand } from "./commands/harden";
+import { inboxCommand } from "./commands/inbox";
 import { testTrackCommand } from "./commands/test-track";
 import { tddCommand } from "./commands/tdd";
+import { auditCommand } from "./commands/audit";
 
 // =============================================================================
 // Main Program
@@ -272,8 +274,8 @@ versionCommand(program);
 
 program
   .command("approve")
-  .description("Approve a pending gate for a feature")
-  .argument("<feature-id>", "Feature ID to approve (e.g., F-1)")
+  .description("Approve pending gates for one or more features")
+  .argument("<feature-ids...>", "Feature IDs to approve (e.g., F-1 F-2 F-3)")
   .action(approveCommand);
 
 program
@@ -346,20 +348,27 @@ program
 
 program
   .command("harden")
-  .description("Run guided acceptance testing protocol against spec criteria")
+  .description("Generate acceptance test templates and ingest filled results")
   .argument("[feature-id]", "Feature ID to harden (e.g., F-1)")
-  .option("--dry-run", "Generate acceptance test specification without interactive session")
-  .option("--all", "Harden all features at implement phase")
+  .option("--dry-run", "Alias for default behavior (generate template)")
+  .option("--all", "Process all features at implement phase")
   .option("--status", "Show hardening progress across all features")
-  .option("--only <ids>", "Only run specific test cases (comma-separated: TC-1,TC-3,TC-5)")
-  .option("--from <id>", "Resume from specific test case (e.g., TC-5)")
+  .option("--ingest", "Read filled acceptance-test.md and record results")
+  .option("--history", "Show acceptance test ingest history for a feature")
   .action((featureId, options) => hardenCommand(featureId, {
     dryRun: options.dryRun,
     all: options.all,
     status: options.status,
-    only: options.only,
-    from: options.from,
+    ingest: options.ingest,
+    history: options.history,
   }));
+
+program
+  .command("inbox")
+  .description("Show priority-ranked review queue of features awaiting approval")
+  .option("--json", "Output as JSON")
+  .option("--verbose", "Show expanded view with per-item decision guidance")
+  .action((options) => inboxCommand({ json: options.json, verbose: options.verbose }));
 
 program
   .command("test-track")
@@ -391,6 +400,21 @@ program
     maxIterations: options.maxIterations ? parseInt(options.maxIterations, 10) : undefined,
     pattern: options.pattern,
     verbose: options.verbose,
+  }));
+
+program
+  .command("audit")
+  .description("Detect spec-reality drift and output a health report")
+  .argument("[feature-id]", "Audit a single feature (e.g., F-1)")
+  .option("--json", "Output as JSON")
+  .option("--fix", "Output only suggested fix commands (pipeable)")
+  .option("--check <name>", "Run only one check (db-status, spec-code, json-sync, phase-artifacts, spec-freshness)")
+  .option("--status <status>", "Audit only features with this status")
+  .action((featureId, options) => auditCommand(featureId, {
+    json: options.json,
+    fix: options.fix,
+    check: options.check,
+    status: options.status,
   }));
 
 program
