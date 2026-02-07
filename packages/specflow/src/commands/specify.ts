@@ -5,8 +5,9 @@
 
 import { join, dirname } from "path";
 import { existsSync, mkdirSync, readFileSync } from "fs";
-import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
+import { runClaude } from "../lib/claude";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -157,11 +158,11 @@ export async function specifyCommand(
       updateFeatureQuickStart(featureId, true);
     }
 
-    // Run Claude with the prompt
+    // Run Claude with the prompt (using inference pattern: --system-prompt, timeout)
     console.log("\nInvoking Claude with SpecFlow specify workflow...\n");
     console.log("─".repeat(60));
 
-    const result = await runClaude(prompt, projectPath);
+    const result = await runClaude(prompt, { cwd: projectPath });
 
     if (result.success) {
       // Check if spec.md was created
@@ -232,55 +233,7 @@ export async function specifyCommand(
   }
 }
 
-/**
- * Run Claude CLI with a prompt
- */
-async function runClaude(
-  prompt: string,
-  cwd: string
-): Promise<{ success: boolean; output: string; error?: string }> {
-  return new Promise((resolve) => {
-    const proc = spawn("claude", ["--print", "--dangerously-skip-permissions", prompt], {
-      cwd,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-
-    let output = "";
-    let stderr = "";
-
-    proc.stdout?.on("data", (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      process.stdout.write(chunk);
-    });
-
-    proc.stderr?.on("data", (data) => {
-      const chunk = data.toString();
-      stderr += chunk;
-      process.stderr.write(chunk);
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0 || output.includes("[PHASE COMPLETE")) {
-        resolve({ success: true, output });
-      } else {
-        resolve({
-          success: false,
-          output,
-          error: stderr || `Claude exited with code ${code}`,
-        });
-      }
-    });
-
-    proc.on("error", (err) => {
-      resolve({
-        success: false,
-        output,
-        error: `Process error: ${err.message}`,
-      });
-    });
-  });
-}
+// runClaude is now imported from ../lib/claude (inference pattern: --system-prompt, timeout)
 
 /**
  * Run spec quality evaluation

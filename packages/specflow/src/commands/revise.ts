@@ -10,8 +10,8 @@
 
 import { join } from "path";
 import { existsSync, readFileSync } from "fs";
-import { spawn } from "child_process";
 import { createInterface } from "readline";
+import { runClaude } from "../lib/claude";
 import {
   initDatabase,
   closeDatabase,
@@ -127,47 +127,7 @@ async function promptForFeedback(): Promise<string> {
   });
 }
 
-/**
- * Run Claude with a revision prompt
- */
-async function runClaudeRevision(
-  prompt: string,
-  cwd: string
-): Promise<{ success: boolean; output: string; error?: string }> {
-  return new Promise((resolve) => {
-    const proc = spawn("claude", ["--print", "--dangerously-skip-permissions", prompt], {
-      cwd,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-
-    let output = "";
-    let stderr = "";
-
-    proc.stdout?.on("data", (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      process.stdout.write(chunk);
-    });
-
-    proc.stderr?.on("data", (data) => {
-      const chunk = data.toString();
-      stderr += chunk;
-      process.stderr.write(chunk);
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve({ success: true, output });
-      } else {
-        resolve({ success: false, output, error: stderr || `Exit code ${code}` });
-      }
-    });
-
-    proc.on("error", (err) => {
-      resolve({ success: false, output, error: err.message });
-    });
-  });
-}
+// runClaudeRevision replaced by shared runClaude from ../lib/claude
 
 /**
  * Determine artifact type from options
@@ -298,7 +258,7 @@ export async function reviseCommand(
     console.log("\nInvoking Claude for revision...\n");
     console.log("─".repeat(60));
 
-    const result = await runClaudeRevision(prompt, projectPath);
+    const result = await runClaude(prompt, { cwd: projectPath });
 
     if (result.success && result.output.trim()) {
       const revisedContent = result.output.trim();

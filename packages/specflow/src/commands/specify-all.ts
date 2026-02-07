@@ -102,12 +102,42 @@ export async function specifyAllCommand(
       console.log(`\nProgress: ${completed}/${pendingFeatures.length} features processed`);
     }
 
+    // Retry failed features sequentially (handles SQLITE_BUSY and transient failures)
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      console.log(`\n🔄 Retrying ${failed.length} failed feature(s) sequentially...\n`);
+      for (const failedResult of failed) {
+        // Reset feature phase before retry (may be stuck in "specify" from failed attempt)
+        const resetProc = spawn("specflow", ["reset", failedResult.featureId], {
+          cwd: projectPath,
+          stdio: ["inherit", "pipe", "pipe"],
+          env: { ...process.env },
+        });
+        await new Promise<void>((resolve) => {
+          resetProc.on("close", () => resolve());
+          resetProc.on("error", () => resolve());
+        });
+
+        const retryResult = await runSpecify(failedResult.featureId, projectPath);
+        // Update the result in place
+        const idx = results.findIndex((r) => r.featureId === failedResult.featureId);
+        if (idx >= 0) {
+          results[idx] = retryResult;
+        }
+        if (retryResult.success) {
+          console.log(`  ✓ ${failedResult.featureId} succeeded on retry`);
+        } else {
+          console.log(`  ✗ ${failedResult.featureId} failed again: ${retryResult.error?.substring(0, 100)}`);
+        }
+      }
+    }
+
     // Summary
     console.log("\n" + "─".repeat(60));
     console.log("\n📊 Specification Summary\n");
 
     const successful = results.filter((r) => r.success);
-    const failed = results.filter((r) => !r.success);
+    const stillFailed = results.filter((r) => !r.success);
 
     console.log(`✓ Successful: ${successful.length}`);
     if (successful.length > 0) {
@@ -116,9 +146,9 @@ export async function specifyAllCommand(
       }
     }
 
-    if (failed.length > 0) {
-      console.log(`\n✗ Failed: ${failed.length}`);
-      for (const r of failed) {
+    if (stillFailed.length > 0) {
+      console.log(`\n✗ Failed: ${stillFailed.length}`);
+      for (const r of stillFailed) {
         console.log(`    ${r.featureId}: ${r.error}`);
       }
     }
