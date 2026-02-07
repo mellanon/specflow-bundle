@@ -141,7 +141,7 @@ program
   .option("--feature <id>", "Implement specific feature (default: next pending)")
   .option("--json", "Output as JSON")
   .option("--no-branch", "Skip feature branch creation (for parallel batch execution)")
-  .action((options) => implementCommand({ featureId: options.feature, json: options.json, noBranch: options.noBranch }));
+  .action((options) => implementCommand({ featureId: options.feature, json: options.json, noBranch: options.branch === false }));
 
 program
   .command("skip")

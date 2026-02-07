@@ -358,6 +358,7 @@ export async function implementCommand(
 
       const claudeResult = await runClaude(implResult.prompt, {
         cwd: projectPath,
+        timeout: 3_600_000, // 60 minutes — implementation includes TDD cycles
       });
 
       const output = claudeResult.output ?? "";
@@ -384,12 +385,14 @@ export async function implementCommand(
       } else if (completion.blocked) {
         console.error(`\n✗ ${feature.id} IMPLEMENT phase blocked: ${completion.blockReason}`);
         updateFeatureStatus(feature.id, "pending");
+        process.exitCode = 1;
       } else if (claudeResult.success) {
         // Claude exited 0 but no marker — treat as success
         console.log(`\n~ ${feature.id} IMPLEMENT phase finished (no completion marker)`);
       } else {
         console.error(`\n✗ ${feature.id} IMPLEMENT phase failed: ${claudeResult.error}`);
         updateFeatureStatus(feature.id, "pending");
+        process.exitCode = 1;
       }
     }
   } finally {
