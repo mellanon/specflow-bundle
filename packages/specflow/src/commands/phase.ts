@@ -23,7 +23,7 @@ export interface PhaseCommandOptions {
   specPath?: string;
 }
 
-const VALID_PHASES: SpecPhase[] = ["none", "specify", "plan", "tasks", "implement", "harden", "review", "release"];
+const VALID_PHASES: SpecPhase[] = ["none", "specify", "plan", "tasks", "implement", "harden", "review", "approve"];
 
 /**
  * Register the 'phase' command with the program

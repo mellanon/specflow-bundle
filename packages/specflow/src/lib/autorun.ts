@@ -20,7 +20,7 @@ import {
 } from "./progress-writer";
 
 // Phase order for determining remaining phases
-const PHASE_ORDER = ["none", "specify", "plan", "tasks", "implement", "harden", "review", "release", "complete"] as const;
+const PHASE_ORDER = ["none", "specify", "plan", "tasks", "implement", "harden", "review", "approve", "complete"] as const;
 
 let shuttingDown = false;
 
@@ -98,8 +98,8 @@ async function runPhaseCommand(
       case "review":
         args = ["review", feature.id];
         break;
-      case "release":
-        args = ["release", feature.id];
+      case "approve":
+        args = ["approve", feature.id];
         break;
       case "complete":
         args = ["complete", feature.id, "--force", "--skip-doctorow"];
