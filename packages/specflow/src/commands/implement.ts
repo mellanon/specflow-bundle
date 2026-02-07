@@ -12,7 +12,7 @@
  */
 
 import { join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import {
   initDatabase,
   closeDatabase,
@@ -24,12 +24,14 @@ import {
   getDbPath,
   dbExists,
 } from "../lib/database";
-import { validateFeatureCompletion } from "./complete";
+import { runClaude } from "../lib/claude";
+import { parseCompletionMarkers, extractAndSaveTestResults } from "../lib/executor";
 import type { Feature } from "../types";
 
 export interface ImplementCommandOptions {
   json?: boolean;
   featureId?: string;
+  noBranch?: boolean;
 }
 
 interface ImplementPrompt {
@@ -47,7 +49,7 @@ interface ImplementPrompt {
 /**
  * Build implementation prompt from spec files
  */
-function buildImplementationPrompt(feature: Feature): ImplementPrompt {
+function buildImplementationPrompt(feature: Feature, noBranch: boolean = false): ImplementPrompt {
   const specPath = feature.specPath!;
   const specFile = join(specPath, "spec.md");
   const planFile = join(specPath, "plan.md");
@@ -61,12 +63,7 @@ function buildImplementationPrompt(feature: Feature): ImplementPrompt {
   // Create branch name from feature id and name (e.g., "feat/F-1-rss-discovery")
   const branchName = `feat/${feature.id}-${feature.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 
-  const prompt = `# Feature Implementation
-
-## Context & Motivation
-
-This implementation prompt is only generated after completing all SpecFlow phases—specification, technical planning, and task breakdown. By the time you reach this phase, requirements are documented, architecture is decided, and tasks are explicit. This upstream work reduces implementation time by 40-50% and prevents the "build first, understand later" anti-pattern that causes rework.
-
+  const branchSection = noBranch ? "" : `
 ## FIRST: Create Feature Branch
 
 **Before writing any code, create and switch to a feature branch:**
@@ -79,7 +76,14 @@ This ensures:
 - Main branch stays clean and deployable
 - Work can be reviewed via pull request
 - Easy rollback if issues arise
+`;
 
+  const prompt = `# Feature Implementation
+
+## Context & Motivation
+
+This implementation prompt is only generated after completing all SpecFlow phases—specification, technical planning, and task breakdown. By the time you reach this phase, requirements are documented, architecture is decided, and tasks are explicit. This upstream work reduces implementation time by 40-50% and prevents the "build first, understand later" anti-pattern that causes rework.
+${branchSection}
 ## Feature
 
 **ID:** ${feature.id}
@@ -298,39 +302,35 @@ export async function implementCommand(
       process.exit(1);
     }
 
-    // CRITICAL: Validate all required files exist
-    const validation = validateFeatureCompletion(feature.specPath);
+    // Validate pre-implementation files (spec, plan, tasks only)
+    // NOTE: docs.md, verify.md, test coverage are post-implementation
+    // checks that belong in 'specflow complete', not here.
+    const specFile = join(feature.specPath, "spec.md");
+    const planFile = join(feature.specPath, "plan.md");
+    const tasksFile = join(feature.specPath, "tasks.md");
 
-    if (!validation.valid) {
+    const specExists = existsSync(specFile);
+    const planExists = existsSync(planFile);
+    const tasksExists = existsSync(tasksFile);
+
+    if (!specExists || !planExists || !tasksExists) {
       console.error("═".repeat(60));
-      console.error("IMPLEMENTATION BLOCKED - SpecFlow workflow incomplete");
+      console.error("IMPLEMENTATION BLOCKED - SpecFlow phases incomplete");
       console.error("═".repeat(60));
       console.error("");
       console.error(`Feature: ${feature.id} - ${feature.name}`);
       console.error("");
-      console.error("Missing required files:");
-      for (const error of validation.errors) {
-        console.error(`  ✗ ${error}`);
-      }
-      console.error("");
-      console.error("The SpecFlow workflow requires completing all phases:");
-      console.error("  1. SPECIFY → spec.md   (requirements and scope)");
-      console.error("  2. PLAN    → plan.md   (technical approach)");
-      console.error("  3. TASKS   → tasks.md  (implementation steps)");
-      console.error("  4. IMPLEMENT           (this command)");
-      console.error("");
-      console.error("Current file status:");
-      console.error(`  spec.md:  ${validation.files.specExists ? "✓ exists" : "✗ missing"}`);
-      console.error(`  plan.md:  ${validation.files.planExists ? "✓ exists" : "✗ missing"}`);
-      console.error(`  tasks.md: ${validation.files.tasksExists ? "✓ exists" : "✗ missing"}`);
+      console.error("File status:");
+      console.error(`  spec.md:  ${specExists ? "✓ exists" : "✗ missing"}`);
+      console.error(`  plan.md:  ${planExists ? "✓ exists" : "✗ missing"}`);
+      console.error(`  tasks.md: ${tasksExists ? "✓ exists" : "✗ missing"}`);
       console.error("");
 
-      // Suggest next step
-      if (!validation.files.specExists) {
+      if (!specExists) {
         console.error(`Next: Run 'specflow specify ${feature.id}'`);
-      } else if (!validation.files.planExists) {
+      } else if (!planExists) {
         console.error(`Next: Run 'specflow plan ${feature.id}'`);
-      } else if (!validation.files.tasksExists) {
+      } else {
         console.error(`Next: Run 'specflow tasks ${feature.id}'`);
       }
 
@@ -345,13 +345,52 @@ export async function implementCommand(
     updateFeatureStatus(feature.id, "in_progress");
     updateFeaturePhase(feature.id, "implement");
 
-    const result = buildImplementationPrompt(feature);
+    const implResult = buildImplementationPrompt(feature, options.noBranch ?? false);
 
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      // JSON mode: output prompt for external consumption
+      console.log(JSON.stringify(implResult, null, 2));
     } else {
-      // Output just the prompt for use with Task tool
-      console.log(result.prompt);
+      // Execute mode: run Claude with the implementation prompt
+      console.log(`\n📝 Implementing ${feature.id} - ${feature.name}\n`);
+      console.log("─".repeat(60));
+      console.log("Invoking Claude with SpecFlow implement workflow...\n");
+
+      const claudeResult = await runClaude(implResult.prompt, {
+        cwd: projectPath,
+      });
+
+      const output = claudeResult.output ?? "";
+
+      // Track test results for TDD traceability
+      const testResults = extractAndSaveTestResults(output, projectPath, feature.id);
+      if (testResults.saved) {
+        console.error(`\n[TDD Track] Saved: ${testResults.pass} pass, ${testResults.fail} fail`);
+      }
+
+      // Parse completion markers
+      const completion = parseCompletionMarkers(output);
+
+      console.log("\n" + "─".repeat(60));
+
+      if (completion.complete) {
+        console.log(`\n✓ ${feature.id} IMPLEMENT phase complete`);
+        if (completion.testsCount) {
+          console.log(`  Tests: ${completion.testsCount} passing`);
+        }
+        if (completion.files.length > 0) {
+          console.log(`  Files: ${completion.files.join(", ")}`);
+        }
+      } else if (completion.blocked) {
+        console.error(`\n✗ ${feature.id} IMPLEMENT phase blocked: ${completion.blockReason}`);
+        updateFeatureStatus(feature.id, "pending");
+      } else if (claudeResult.success) {
+        // Claude exited 0 but no marker — treat as success
+        console.log(`\n~ ${feature.id} IMPLEMENT phase finished (no completion marker)`);
+      } else {
+        console.error(`\n✗ ${feature.id} IMPLEMENT phase failed: ${claudeResult.error}`);
+        updateFeatureStatus(feature.id, "pending");
+      }
     }
   } finally {
     closeDatabase();

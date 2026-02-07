@@ -48,6 +48,7 @@ import { inboxCommand } from "./commands/inbox";
 import { testTrackCommand } from "./commands/test-track";
 import { tddCommand } from "./commands/tdd";
 import { auditCommand } from "./commands/audit";
+import { registerArtifactsCommand } from "./commands/artifacts";
 
 // =============================================================================
 // Main Program
@@ -139,7 +140,8 @@ program
   .description("Generate implementation prompt (validates phases first)")
   .option("--feature <id>", "Implement specific feature (default: next pending)")
   .option("--json", "Output as JSON")
-  .action((options) => implementCommand({ featureId: options.feature, json: options.json }));
+  .option("--no-branch", "Skip feature branch creation (for parallel batch execution)")
+  .action((options) => implementCommand({ featureId: options.feature, json: options.json, noBranch: options.noBranch }));
 
 program
   .command("skip")
@@ -416,6 +418,8 @@ program
     check: options.check,
     status: options.status,
   }));
+
+registerArtifactsCommand(program);
 
 program
   .command("ui")
