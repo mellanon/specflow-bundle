@@ -5,8 +5,8 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
-import { spawnSync } from "child_process";
 import type { DecomposedFeature } from "../types";
+import { runClaude } from "./claude";
 
 // =============================================================================
 // Prompt Loading
@@ -335,18 +335,19 @@ export async function decomposeSpec(
   let prompt = buildDecomposePrompt(appSpec);
   prompt += `\n\nGenerate between ${minFeatures} and ${maxFeatures} features.`;
 
-  // Call Claude via subprocess
-  const result = spawnSync("claude", ["--print", "--dangerously-skip-permissions", prompt], {
-    encoding: "utf-8",
-    maxBuffer: 10 * 1024 * 1024, // 10MB
+  // Call Claude via shared utility (--system-prompt override, proper timeout)
+  const result = await runClaude(prompt, {
+    cwd: process.cwd(),
+    pipeOutput: false,
+    systemPrompt: "You are a feature decomposition assistant. Analyze the specification and output the requested JSON feature list. No formatting, no headers — only the JSON array.",
   });
 
-  if (result.status !== 0) {
-    throw new Error(`Claude command failed: ${result.stderr}`);
+  if (!result.success) {
+    throw new Error(`Claude command failed: ${result.error}`);
   }
 
   // Parse the output
-  const features = parseDecompositionOutput(result.stdout);
+  const features = parseDecompositionOutput(result.output);
 
   // Validate
   const errors = validateDecomposedFeatures(features);

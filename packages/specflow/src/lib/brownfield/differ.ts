@@ -6,8 +6,8 @@
 
 import { join } from "path";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
-import { spawn } from "child_process";
 import type { ScanResult, FileEntry } from "./scanner";
+import { runClaude } from "../claude";
 
 // =============================================================================
 // Types
@@ -241,25 +241,17 @@ Only return the JSON array, no other text.`;
 
 /**
  * Run Claude headless for AI classification
+ * Uses shared runClaude utility with --system-prompt override and proper timeout
  */
-function runClaudeHeadless(prompt: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const proc = spawn("claude", ["--print", "--dangerously-skip-permissions", prompt], {
-      stdio: ["inherit", "pipe", "pipe"],
-      timeout: 30000,
-    });
-
-    let output = "";
-    proc.stdout?.on("data", (data) => {
-      output += data.toString();
-    });
-
-    proc.on("close", (code) => {
-      resolve(code === 0 ? output.trim() : null);
-    });
-
-    proc.on("error", () => resolve(null));
+async function runClaudeHeadless(prompt: string): Promise<string | null> {
+  const result = await runClaude(prompt, {
+    cwd: process.cwd(),
+    timeout: 120_000,
+    pipeOutput: false,
+    systemPrompt: "You are a code analysis assistant. Respond only with the requested JSON format. No formatting, no headers, no explanations outside the JSON.",
   });
+
+  return result.success ? result.output.trim() : null;
 }
 
 // =============================================================================

@@ -7,6 +7,7 @@
 import { spawn, spawnSync } from "child_process";
 import type { RunResult, FeatureContext } from "../types";
 import { writeTestRun, type TestRunResult } from "./test-tracker/artifacts";
+import { runClaude, SPECFLOW_SYSTEM_PROMPT } from "./claude";
 
 // =============================================================================
 // Completion Detection
@@ -199,24 +200,22 @@ export async function executeFeature(
   }
 
   try {
-    // Execute Claude CLI
-    const result = spawnSync("claude", ["--print", "--dangerously-skip-permissions", prompt], {
-      encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024, // 50MB buffer
-      timeout,
+    // Execute Claude CLI using shared utility (--system-prompt, timeout handling)
+    const claudeResult = await runClaude(prompt, {
       cwd: context.app.projectPath,
+      timeout,
+      pipeOutput: false,
     });
 
-    const output = result.stdout ?? "";
-    const stderr = result.stderr ?? "";
+    const output = claudeResult.output ?? "";
 
     // Check for execution errors
-    if (result.status !== 0 && !output) {
+    if (!claudeResult.success && !output) {
       return {
         success: false,
         featureId: context.feature.id,
-        output: stderr,
-        error: `Claude exited with status ${result.status}`,
+        output: claudeResult.error ?? "",
+        error: claudeResult.error ?? "Claude execution failed",
         blocked: false,
         blockReason: null,
       };
@@ -298,7 +297,13 @@ export function executeFeatureStreaming(
   }
 
   return new Promise((resolve) => {
-    const proc = spawn("claude", ["--print", "--dangerously-skip-permissions", prompt], {
+    const proc = spawn("claude", [
+      "--print",
+      "--dangerously-skip-permissions",
+      "--system-prompt",
+      SPECFLOW_SYSTEM_PROMPT,
+      prompt,
+    ], {
       cwd: context.app.projectPath,
     });
 

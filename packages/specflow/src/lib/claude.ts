@@ -45,7 +45,7 @@ export interface RunClaudeResult {
  * This override prevents PAI hooks from injecting Algorithm formatting,
  * voice notifications, and other context that corrupts spec output.
  */
-const SPECFLOW_SYSTEM_PROMPT = `You are a SpecFlow specification writer. Your sole purpose is to follow the prompt instructions exactly and write the requested files.
+export const SPECFLOW_SYSTEM_PROMPT = `You are a SpecFlow specification writer. Your sole purpose is to follow the prompt instructions exactly and write the requested files.
 
 CRITICAL RULES:
 - Do NOT use any special formatting (no 🤖 PAI ALGORITHM headers, no phase announcements)

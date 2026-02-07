@@ -143,12 +143,11 @@ export function initDatabase(dbPath: string): Database {
 
   db = new Database(dbPath, { create: true });
 
+  // Set busy timeout FIRST so all subsequent operations (including WAL switch) retry on lock
+  db.exec("PRAGMA busy_timeout = 5000");
+
   // Enable WAL mode for better concurrency
   db.exec("PRAGMA journal_mode = WAL");
-
-  // Set busy timeout so concurrent processes retry instead of failing with SQLITE_BUSY
-  // 5 seconds is enough for specify-all parallel processes to take turns writing
-  db.exec("PRAGMA busy_timeout = 5000");
 
   // Create features table
   db.exec(`

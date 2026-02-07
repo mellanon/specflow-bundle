@@ -6,6 +6,7 @@
 import { join, dirname } from "path";
 import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
 import { runClaude } from "../lib/claude";
 
 const __filename = fileURLToPath(import.meta.url);
