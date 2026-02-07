@@ -25,9 +25,9 @@ export type SkipReason =
 
 /**
  * SpecFlow phase for a feature
- * Each feature must progress through: specify -> plan -> tasks -> implement
+ * Each feature must progress through: specify -> plan -> tasks -> implement -> harden -> review
  */
-export type SpecPhase = "none" | "specify" | "plan" | "tasks" | "implement";
+export type SpecPhase = "none" | "specify" | "plan" | "tasks" | "implement" | "harden" | "review" | "release";
 
 // =============================================================================
 // Feature
@@ -47,7 +47,7 @@ export interface Feature {
   priority: number;
   /** Current status */
   status: FeatureStatus;
-  /** Current SpecFlow phase (none -> specify -> plan -> tasks -> implement) */
+  /** Current SpecFlow phase (none -> specify -> plan -> tasks -> implement -> harden -> review -> release) */
   phase: SpecPhase;
   /** Path to detailed spec directory (if specified) */
   specPath: string | null;
@@ -736,7 +736,7 @@ export interface AutorunSummary {
 }
 
 /** Phase sequence for autorun */
-export const AUTORUN_PHASES = ["specify", "plan", "tasks", "implement", "complete"] as const;
+export const AUTORUN_PHASES = ["specify", "plan", "tasks", "implement", "harden", "review", "release", "complete"] as const;
 export type AutorunPhase = (typeof AUTORUN_PHASES)[number];
 
 // =============================================================================

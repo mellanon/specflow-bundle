@@ -186,7 +186,7 @@ export const schemaValidGrader: Grader = {
 /**
  * Phase order definition
  */
-const PHASE_ORDER = ["specify", "plan", "tasks", "implement"] as const;
+const PHASE_ORDER = ["specify", "plan", "tasks", "implement", "harden", "review", "release"] as const;
 type Phase = (typeof PHASE_ORDER)[number];
 
 /**

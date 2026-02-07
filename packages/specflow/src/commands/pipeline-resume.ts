@@ -12,7 +12,7 @@ import { resolveFailureInDb, getUnresolvedFailures } from "../lib/failure-writer
 import type { SpecPhase, PhaseEvent } from "../types";
 import { notify } from "../lib/notifications/dispatcher";
 
-const PHASE_ORDER: SpecPhase[] = ["specify", "plan", "tasks", "implement"];
+const PHASE_ORDER: SpecPhase[] = ["specify", "plan", "tasks", "implement", "harden", "review", "release"];
 
 export function pipelineResumeCommand(featureId: string): void {
   const projectPath = process.cwd();

@@ -375,20 +375,24 @@ export async function implementCommand(
       console.log("\n" + "─".repeat(60));
 
       if (completion.complete) {
-        console.log(`\n✓ ${feature.id} IMPLEMENT phase complete`);
+        updateFeaturePhase(feature.id, "harden");
+        console.log(`\n✓ ${feature.id} IMPLEMENT phase complete → harden`);
         if (completion.testsCount) {
           console.log(`  Tests: ${completion.testsCount} passing`);
         }
         if (completion.files.length > 0) {
           console.log(`  Files: ${completion.files.join(", ")}`);
         }
+        console.log(`  Next: specflow harden ${feature.id}`);
+      } else if (claudeResult.success) {
+        // Claude exited 0 but no marker — still advance, implementation ran
+        updateFeaturePhase(feature.id, "harden");
+        console.log(`\n~ ${feature.id} IMPLEMENT phase finished → harden (no completion marker)`);
+        console.log(`  Next: specflow harden ${feature.id}`);
       } else if (completion.blocked) {
         console.error(`\n✗ ${feature.id} IMPLEMENT phase blocked: ${completion.blockReason}`);
         updateFeatureStatus(feature.id, "pending");
         process.exitCode = 1;
-      } else if (claudeResult.success) {
-        // Claude exited 0 but no marker — treat as success
-        console.log(`\n~ ${feature.id} IMPLEMENT phase finished (no completion marker)`);
       } else {
         console.error(`\n✗ ${feature.id} IMPLEMENT phase failed: ${claudeResult.error}`);
         updateFeatureStatus(feature.id, "pending");

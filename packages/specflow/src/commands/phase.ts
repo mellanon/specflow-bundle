@@ -23,7 +23,7 @@ export interface PhaseCommandOptions {
   specPath?: string;
 }
 
-const VALID_PHASES: SpecPhase[] = ["none", "specify", "plan", "tasks", "implement"];
+const VALID_PHASES: SpecPhase[] = ["none", "specify", "plan", "tasks", "implement", "harden", "review", "release"];
 
 /**
  * Register the 'phase' command with the program
@@ -31,7 +31,7 @@ const VALID_PHASES: SpecPhase[] = ["none", "specify", "plan", "tasks", "implemen
 export function phaseCommand(program: import("commander").Command): void {
   program
     .command("phase <feature-id> [phase]")
-    .description("Get or set the phase for a feature (none, specify, plan, tasks, implement)")
+    .description("Get or set the phase for a feature (none, specify, plan, tasks, implement, harden, review, release)")
     .option("--spec-path <path>", "Set the spec path for the feature")
     .action(async (featureId: string, phase: string | undefined, options: PhaseCommandOptions) => {
       const projectPath = process.cwd();

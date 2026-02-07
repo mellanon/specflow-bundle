@@ -218,7 +218,8 @@ function ingestForFeature(featureId: string): void {
     console.log(`\n  ${s.fail} test(s) FAILED. Feature returned to implement phase.`);
     console.log(`  Review failures, fix, and re-test.\n`);
   } else if (s.pass > 0) {
-    console.log(`\n  ALL TESTS PASSED. Feature ${featureId} eligible for completion.`);
+    updateFeaturePhase(featureId, "review");
+    console.log(`\n  ALL TESTS PASSED. Feature ${featureId} → review phase.`);
     console.log(`  Next: Run 'specflow review ${featureId}'\n`);
   }
 }
@@ -530,6 +531,10 @@ export async function hardenCommand(
         process.exit(1);
       }
 
+      // Set phase to harden on entry
+      if (feature.phase === "implement") {
+        updateFeaturePhase(featureId, "harden");
+      }
       console.log(`\n  Harden: ${featureId} - ${feature.name}\n`);
       await generateForFeature(featureId, feature);
       console.log(
